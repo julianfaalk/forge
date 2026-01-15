@@ -55,7 +55,7 @@
                             <circle cx="12" cy="12" r="3"></circle>
                             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
                         </svg>
-                        Einstellungen
+                        Settings
                     </button>
                     <div class="user-dropdown-divider"></div>
                     <button class="user-dropdown-item user-dropdown-item-danger hidden" id="btnDisconnectGithub">
@@ -64,7 +64,7 @@
                             <polyline points="16 17 21 12 16 7"></polyline>
                             <line x1="21" y1="12" x2="9" y2="12"></line>
                         </svg>
-                        Abmelden
+                        Disconnect
                     </button>
                 </div>
             </div>
@@ -79,25 +79,25 @@
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-section">
                 <div class="sidebar-header">
-                    <h3>Projekte</h3>
+                    <h3>Projects</h3>
                     <div class="sidebar-actions">
-                        <button id="btnRefreshProjects" class="btn btn-small btn-secondary" title="Projekte aktualisieren">&#8635;</button>
-                        <button id="btnScanProjects" class="btn btn-small btn-secondary" title="Ordner scannen">Scan</button>
-                        <button id="btnAddProject" class="btn btn-small btn-add" title="Projekt hinzuf&uuml;gen">+</button>
+                        <button id="btnRefreshProjects" class="btn btn-small btn-secondary" title="Refresh projects">&#8635;</button>
+                        <button id="btnScanProjects" class="btn btn-small btn-secondary" title="Scan folder">Scan</button>
+                        <button id="btnAddProject" class="btn btn-small btn-add" title="Add project">+</button>
                     </div>
                 </div>
                 <div class="project-list">
                     <div class="project-item active" data-project-id="">
                         <span class="project-icon">&#128193;</span>
-                        <span class="project-name">Alle Projekte</span>
+                        <span class="project-name">All Projects</span>
                     </div>
                     <!-- Projects loaded dynamically -->
                 </div>
             </div>
             <div class="sidebar-section">
                 <div class="sidebar-header">
-                    <h3>Task-Typen</h3>
-                    <button id="btnAddTaskType" class="btn btn-small btn-add" title="Typ hinzuf&uuml;gen">+</button>
+                    <h3>Task Types</h3>
+                    <button id="btnAddTaskType" class="btn btn-small btn-add" title="Add type">+</button>
                 </div>
                 <div class="task-type-list">
                     <!-- Task types loaded dynamically -->
@@ -133,7 +133,7 @@
 
             <div class="column" data-status="done">
                 <div class="column-header">
-                    <h2><span class="column-rocket" title="Tasks hier werden automatisch gemergt und gepusht">&#128640;</span> Done</h2>
+                    <h2><span class="column-rocket" title="Tasks here are automatically merged and pushed">&#128640;</span> Done</h2>
                 </div>
                 <div class="tasks-container"></div>
             </div>
@@ -160,33 +160,33 @@
                     <input type="hidden" id="taskId">
 
                     <div class="form-group">
-                        <label for="taskTitle">Titel *</label>
+                        <label for="taskTitle">Title *</label>
                         <input type="text" id="taskTitle" required>
                     </div>
 
                     <div class="form-group">
-                        <label for="taskDescription">Beschreibung (Markdown)</label>
-                        <textarea id="taskDescription" rows="6" placeholder="Was soll implementiert werden?"></textarea>
+                        <label for="taskDescription">Description (Markdown)</label>
+                        <textarea id="taskDescription" rows="6" placeholder="What should be implemented?"></textarea>
                     </div>
 
                     <div class="form-group">
-                        <label for="taskCriteria">Akzeptanzkriterien</label>
-                        <textarea id="taskCriteria" rows="4" placeholder="Wann ist der Task erledigt?"></textarea>
+                        <label for="taskCriteria">Acceptance Criteria</label>
+                        <textarea id="taskCriteria" rows="4" placeholder="When is the task complete?"></textarea>
                     </div>
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="taskProject">Projekt</label>
+                            <label for="taskProject">Project</label>
                             <select id="taskProject">
-                                <option value="">Kein Projekt</option>
+                                <option value="">No project</option>
                                 <!-- Projects loaded dynamically -->
                             </select>
                         </div>
 
                         <div class="form-group">
-                            <label for="taskType">Task-Typ</label>
+                            <label for="taskType">Task Type</label>
                             <select id="taskType">
-                                <option value="">Kein Typ</option>
+                                <option value="">No type</option>
                                 <!-- Task types loaded dynamically -->
                             </select>
                         </div>
@@ -194,31 +194,31 @@
 
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="taskPriority">Priorit&auml;t</label>
+                            <label for="taskPriority">Priority</label>
                             <select id="taskPriority">
-                                <option value="1">Hoch</option>
-                                <option value="2" selected>Mittel</option>
-                                <option value="3">Niedrig</option>
+                                <option value="1">High</option>
+                                <option value="2" selected>Medium</option>
+                                <option value="3">Low</option>
                             </select>
                         </div>
 
                         <div class="form-group">
-                            <label for="taskMaxIterations">Max. Iterationen</label>
+                            <label for="taskMaxIterations">Max Iterations</label>
                             <input type="number" id="taskMaxIterations" value="10" min="1" max="100">
                         </div>
                     </div>
 
                     <div class="form-group" id="projectDirGroup">
-                        <label for="taskProjectDir">Projekt-Verzeichnis</label>
+                        <label for="taskProjectDir">Project Directory</label>
                         <div class="path-input-row">
-                            <input type="text" id="taskProjectDir" placeholder="Leer = Standard verwenden">
-                            <button type="button" id="btnBrowse" class="btn btn-secondary">Durchsuchen</button>
+                            <input type="text" id="taskProjectDir" placeholder="Empty = use default">
+                            <button type="button" id="btnBrowse" class="btn btn-secondary">Browse</button>
                         </div>
                     </div>
 
                     <!-- Branch info display (read-only, shown when task is running) -->
                     <div class="form-group hidden" id="branchInfoGroup">
-                        <label>Aktueller Branch</label>
+                        <label>Current Branch</label>
                         <div class="branch-display">
                             <svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                                 <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>
@@ -230,23 +230,23 @@
 
                 <!-- RALPH Controls (shown when task is running) -->
                 <div id="ralphControls" class="ralph-controls hidden">
-                    <h3>RALPH-Steuerung</h3>
+                    <h3>RALPH Controls</h3>
                     <div class="ralph-buttons">
                         <button id="btnPause" class="btn btn-warning">Pause</button>
-                        <button id="btnResume" class="btn btn-success hidden">Fortsetzen</button>
-                        <button id="btnStop" class="btn btn-danger">Stopp</button>
+                        <button id="btnResume" class="btn btn-success hidden">Resume</button>
+                        <button id="btnStop" class="btn btn-danger">Stop</button>
                     </div>
                 </div>
 
                 <!-- Feedback Section (shown for all states except backlog) -->
                 <div id="feedbackSection" class="feedback-section hidden">
                     <div class="form-group">
-                        <label for="feedbackInput" id="feedbackLabel">Feedback an Claude:</label>
+                        <label for="feedbackInput" id="feedbackLabel">Feedback to Claude:</label>
                         <div class="feedback-row">
-                            <textarea id="feedbackInput" rows="2" placeholder="Nachricht eingeben..."></textarea>
-                            <button id="btnFeedback" class="btn btn-primary">Senden</button>
+                            <textarea id="feedbackInput" rows="2" placeholder="Enter message..."></textarea>
+                            <button id="btnFeedback" class="btn btn-primary">Send</button>
                         </div>
-                        <p class="help-text" id="feedbackHelp">Sendet Feedback an den laufenden Prozess</p>
+                        <p class="help-text" id="feedbackHelp">Send feedback to running process</p>
                     </div>
                 </div>
 
@@ -265,14 +265,14 @@
 
                 <!-- Error Display -->
                 <div id="errorSection" class="error-section hidden">
-                    <h3>Fehler</h3>
+                    <h3>Error</h3>
                     <p id="errorMessage"></p>
                 </div>
             </div>
 
             <div class="modal-footer">
-                <button id="btnDelete" class="btn btn-danger hidden">L&ouml;schen</button>
-                <button id="btnSave" class="btn btn-primary">Speichern</button>
+                <button id="btnDelete" class="btn btn-danger hidden">Delete</button>
+                <button id="btnSave" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>
@@ -281,12 +281,12 @@
     <div id="folderModal" class="modal">
         <div class="modal-content folder-modal">
             <div class="modal-header">
-                <h2>Ordner ausw&auml;hlen</h2>
+                <h2>Select Folder</h2>
                 <button class="close-btn folder-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="folder-nav">
-                    <button id="btnParentDir" class="btn btn-secondary btn-small">&uarr; H&ouml;her</button>
+                    <button id="btnParentDir" class="btn btn-secondary btn-small">&uarr; Up</button>
                     <input type="text" id="currentPath" class="path-display" readonly>
                 </div>
                 <div id="folderList" class="folder-list">
@@ -294,14 +294,14 @@
                 </div>
                 <div class="new-folder-section">
                     <div class="new-folder-row">
-                        <input type="text" id="newFolderName" placeholder="Neuer Ordner Name...">
-                        <button id="btnCreateFolder" class="btn btn-primary">Erstellen</button>
+                        <input type="text" id="newFolderName" placeholder="New folder name...">
+                        <button id="btnCreateFolder" class="btn btn-primary">Create</button>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="btnCancelFolder" class="btn btn-secondary">Abbrechen</button>
-                <button id="btnSelectFolder" class="btn btn-primary">Ausw&auml;hlen</button>
+                <button id="btnCancelFolder" class="btn btn-secondary">Cancel</button>
+                <button id="btnSelectFolder" class="btn btn-primary">Select</button>
             </div>
         </div>
     </div>
@@ -310,7 +310,7 @@
     <div id="projectModal" class="modal">
         <div class="modal-content modal-small">
             <div class="modal-header">
-                <h2 id="projectModalTitle">Neues Projekt</h2>
+                <h2 id="projectModalTitle">New Project</h2>
                 <button class="close-btn project-close">&times;</button>
             </div>
             <div class="modal-body">
@@ -319,39 +319,39 @@
 
                     <div class="form-group">
                         <label for="projectName">Name *</label>
-                        <input type="text" id="projectName" required placeholder="Projektname">
+                        <input type="text" id="projectName" required placeholder="Project name">
                     </div>
 
                     <div class="form-group">
-                        <label for="projectPath">Pfad *</label>
+                        <label for="projectPath">Path *</label>
                         <div class="path-input-row">
-                            <input type="text" id="projectPath" required placeholder="/pfad/zum/projekt">
-                            <button type="button" id="btnBrowseProject" class="btn btn-secondary">Durchsuchen</button>
+                            <input type="text" id="projectPath" required placeholder="/path/to/project">
+                            <button type="button" id="btnBrowseProject" class="btn btn-secondary">Browse</button>
                         </div>
                     </div>
 
                     <div class="form-group">
-                        <label for="projectDescription">Beschreibung</label>
-                        <textarea id="projectDescription" rows="3" placeholder="Optionale Beschreibung"></textarea>
+                        <label for="projectDescription">Description</label>
+                        <textarea id="projectDescription" rows="3" placeholder="Optional description"></textarea>
                     </div>
 
                     <!-- Branch Protection Rules -->
                     <div class="form-group">
-                        <label>Branch-Schutzregeln</label>
-                        <p class="help-text">Branches, auf die RALPH niemals pushen darf</p>
+                        <label>Branch Protection Rules</label>
+                        <p class="help-text">Branches that RALPH is never allowed to push to</p>
                         <div class="branch-rules-list" id="branchRulesList">
                             <!-- Rules loaded dynamically -->
                         </div>
                         <div class="add-rule-row">
-                            <input type="text" id="newBranchRule" placeholder="z.B. main, master, release/*">
-                            <button type="button" id="btnAddBranchRule" class="btn btn-secondary btn-small">Hinzuf&uuml;gen</button>
+                            <input type="text" id="newBranchRule" placeholder="e.g. main, master, release/*">
+                            <button type="button" id="btnAddBranchRule" class="btn btn-secondary btn-small">Add</button>
                         </div>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
-                <button id="btnDeleteProject" class="btn btn-danger hidden">L&ouml;schen</button>
-                <button id="btnSaveProject" class="btn btn-primary">Speichern</button>
+                <button id="btnDeleteProject" class="btn btn-danger hidden">Delete</button>
+                <button id="btnSaveProject" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>
@@ -360,38 +360,38 @@
     <div id="scanModal" class="modal">
         <div class="modal-content modal-small">
             <div class="modal-header">
-                <h2>Projekte scannen</h2>
+                <h2>Scan Projects</h2>
                 <button class="close-btn scan-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label for="scanBasePath">Basis-Verzeichnis</label>
+                    <label for="scanBasePath">Base Directory</label>
                     <div class="path-input-row">
-                        <input type="text" id="scanBasePath" placeholder="/pfad/zum/ordner">
-                        <button type="button" id="btnBrowseScan" class="btn btn-secondary">Durchsuchen</button>
+                        <input type="text" id="scanBasePath" placeholder="/path/to/folder">
+                        <button type="button" id="btnBrowseScan" class="btn btn-secondary">Browse</button>
                     </div>
-                    <p class="help-text">Scannt nach Git-Repositories in diesem Verzeichnis</p>
+                    <p class="help-text">Scans for Git repositories in this directory</p>
                 </div>
                 <div class="form-group">
-                    <label for="scanDepth">Suchtiefe</label>
+                    <label for="scanDepth">Search Depth</label>
                     <select id="scanDepth">
-                        <option value="2">2 Ebenen</option>
-                        <option value="3">3 Ebenen</option>
-                        <option value="4" selected>4 Ebenen</option>
-                        <option value="5">5 Ebenen</option>
-                        <option value="6">6 Ebenen</option>
-                        <option value="8">8 Ebenen</option>
+                        <option value="2">2 levels</option>
+                        <option value="3">3 levels</option>
+                        <option value="4" selected>4 levels</option>
+                        <option value="5">5 levels</option>
+                        <option value="6">6 levels</option>
+                        <option value="8">8 levels</option>
                     </select>
                 </div>
                 <div id="scanResults" class="scan-results hidden">
-                    <h4>Gefundene Repositories:</h4>
+                    <h4>Found Repositories:</h4>
                     <div id="scanResultsList" class="scan-results-list"></div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="btnCancelScan" class="btn btn-secondary">Abbrechen</button>
-                <button id="btnStartScan" class="btn btn-primary">Scannen</button>
-                <button id="btnImportScan" class="btn btn-success hidden">Importieren</button>
+                <button id="btnCancelScan" class="btn btn-secondary">Cancel</button>
+                <button id="btnStartScan" class="btn btn-primary">Scan</button>
+                <button id="btnImportScan" class="btn btn-success hidden">Import</button>
             </div>
         </div>
     </div>
@@ -400,7 +400,7 @@
     <div id="taskTypeModal" class="modal">
         <div class="modal-content modal-small">
             <div class="modal-header">
-                <h2 id="taskTypeModalTitle">Neuer Task-Typ</h2>
+                <h2 id="taskTypeModalTitle">New Task Type</h2>
                 <button class="close-btn tasktype-close">&times;</button>
             </div>
             <div class="modal-body">
@@ -409,11 +409,11 @@
 
                     <div class="form-group">
                         <label for="taskTypeName">Name *</label>
-                        <input type="text" id="taskTypeName" required placeholder="z.B. Feature, Bug, Refactor">
+                        <input type="text" id="taskTypeName" required placeholder="e.g. Feature, Bug, Refactor">
                     </div>
 
                     <div class="form-group">
-                        <label for="taskTypeColor">Farbe</label>
+                        <label for="taskTypeColor">Color</label>
                         <div class="color-picker-row">
                             <input type="color" id="taskTypeColor" value="#58a6ff">
                             <span id="taskTypeColorPreview" class="color-preview" style="background-color: #58a6ff;"></span>
@@ -422,8 +422,8 @@
                 </form>
             </div>
             <div class="modal-footer">
-                <button id="btnDeleteTaskType" class="btn btn-danger hidden">L&ouml;schen</button>
-                <button id="btnSaveTaskType" class="btn btn-primary">Speichern</button>
+                <button id="btnDeleteTaskType" class="btn btn-danger hidden">Delete</button>
+                <button id="btnSaveTaskType" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>
@@ -432,12 +432,12 @@
     <div id="settingsModal" class="modal">
         <div class="modal-content settings-modal">
             <div class="modal-header">
-                <h2>Einstellungen</h2>
+                <h2>Settings</h2>
                 <button class="close-btn settings-close">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="settings-tabs">
-                    <button class="settings-tab active" data-tab="general">Allgemein</button>
+                    <button class="settings-tab active" data-tab="general">General</button>
                     <button class="settings-tab" data-tab="github">GitHub</button>
                     <button class="settings-tab" data-tab="tasks">Tasks</button>
                 </div>
@@ -445,24 +445,24 @@
                 <!-- General Settings -->
                 <div class="settings-content active" id="settings-general">
                     <div class="form-group">
-                        <label for="settingsProjectDir">Standard Projekt-Verzeichnis</label>
+                        <label for="settingsProjectDir">Default Project Directory</label>
                         <div class="path-input-row">
-                            <input type="text" id="settingsProjectDir" placeholder="/pfad/zum/projekt">
-                            <button type="button" id="btnBrowseSettingsDir" class="btn btn-secondary">Durchsuchen</button>
+                            <input type="text" id="settingsProjectDir" placeholder="/path/to/project">
+                            <button type="button" id="btnBrowseSettingsDir" class="btn btn-secondary">Browse</button>
                         </div>
-                        <p class="help-text">Wird als Standard verwendet, wenn kein Projekt ausgew&auml;hlt ist</p>
+                        <p class="help-text">Used as default when no project is selected</p>
                     </div>
 
                     <div class="form-group">
-                        <label for="settingsClaudeCommand">Claude Command Pfad</label>
+                        <label for="settingsClaudeCommand">Claude Command Path</label>
                         <input type="text" id="settingsClaudeCommand" placeholder="claude">
-                        <p class="help-text">Pfad zum Claude CLI Befehl (Standard: claude)</p>
+                        <p class="help-text">Path to Claude CLI command (default: claude)</p>
                     </div>
 
                     <div class="form-group">
-                        <label for="settingsMaxIterations">Max. Iterationen (Standard)</label>
+                        <label for="settingsMaxIterations">Max Iterations (Default)</label>
                         <input type="number" id="settingsMaxIterations" value="10" min="1" max="100">
-                        <p class="help-text">Maximale Anzahl an RALPH-Iterationen f&uuml;r neue Tasks</p>
+                        <p class="help-text">Maximum number of RALPH iterations for new tasks</p>
                     </div>
                 </div>
 
@@ -472,11 +472,11 @@
                         <label for="settingsGithubToken">Personal Access Token (PAT)</label>
                         <div class="token-input-row">
                             <input type="password" id="settingsGithubToken" placeholder="ghp_xxxxxxxxxxxx">
-                            <button type="button" id="btnToggleToken" class="btn btn-secondary btn-small">Zeigen</button>
+                            <button type="button" id="btnToggleToken" class="btn btn-secondary btn-small">Show</button>
                         </div>
                         <p class="help-text">
-                            Token generieren bei <a href="https://github.com/settings/tokens" target="_blank">GitHub Settings</a>
-                            mit 'repo' Berechtigung.
+                            Generate token at <a href="https://github.com/settings/tokens" target="_blank">GitHub Settings</a>
+                            with 'repo' scope.
                         </p>
                     </div>
 
@@ -488,48 +488,48 @@
                     <div class="form-group">
                         <label class="checkbox-label">
                             <input type="checkbox" id="settingsAutoCommit">
-                            Auto-Commit bei Task-Abschluss
+                            Auto-commit on task completion
                         </label>
-                        <p class="help-text">Automatisch committen wenn ein Task in Done verschoben wird</p>
+                        <p class="help-text">Automatically commit when a task is moved to Done</p>
                     </div>
 
                     <div class="form-group">
                         <label class="checkbox-label">
                             <input type="checkbox" id="settingsAutoPush">
-                            Auto-Push nach Commit
+                            Auto-push after commit
                         </label>
-                        <p class="help-text">Automatisch pushen nachdem &Auml;nderungen committed wurden</p>
+                        <p class="help-text">Automatically push after changes are committed</p>
                     </div>
 
                     <div class="form-group">
-                        <label for="settingsDefaultBranch">Standard Branch</label>
+                        <label for="settingsDefaultBranch">Default Branch</label>
                         <input type="text" id="settingsDefaultBranch" placeholder="main">
-                        <p class="help-text">Branch der f&uuml;r neue Projekte verwendet wird</p>
+                        <p class="help-text">Branch used for new projects</p>
                     </div>
                 </div>
 
                 <!-- Tasks Settings -->
                 <div class="settings-content" id="settings-tasks">
                     <div class="form-group">
-                        <label for="settingsDefaultPriority">Standard Priorit&auml;t</label>
+                        <label for="settingsDefaultPriority">Default Priority</label>
                         <select id="settingsDefaultPriority">
-                            <option value="1">Hoch</option>
-                            <option value="2" selected>Mittel</option>
-                            <option value="3">Niedrig</option>
+                            <option value="1">High</option>
+                            <option value="2" selected>Medium</option>
+                            <option value="3">Low</option>
                         </select>
-                        <p class="help-text">Standard-Priorit&auml;t f&uuml;r neue Tasks</p>
+                        <p class="help-text">Default priority for new tasks</p>
                     </div>
 
                     <div class="form-group">
-                        <label for="settingsAutoArchive">Auto-Archiv nach Tagen</label>
+                        <label for="settingsAutoArchive">Auto-archive after days</label>
                         <input type="number" id="settingsAutoArchive" value="0" min="0" max="365">
-                        <p class="help-text">Tasks in Done nach X Tagen automatisch archivieren (0 = deaktiviert)</p>
+                        <p class="help-text">Automatically archive tasks in Done after X days (0 = disabled)</p>
                     </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="btnValidateSettings" class="btn btn-secondary">Token validieren</button>
-                <button id="btnSaveSettings" class="btn btn-primary">Speichern</button>
+                <button id="btnValidateSettings" class="btn btn-secondary">Validate token</button>
+                <button id="btnSaveSettings" class="btn btn-primary">Save</button>
             </div>
         </div>
     </div>
@@ -626,8 +626,8 @@
 
     <!-- WebSocket Reconnect Banner -->
     <div id="reconnectBanner" class="reconnect-banner hidden">
-        <span>Verbindung verloren</span>
-        <button id="btnReconnect" class="btn btn-small">Neu verbinden</button>
+        <span>Connection lost</span>
+        <button id="btnReconnect" class="btn btn-small">Reconnect</button>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>

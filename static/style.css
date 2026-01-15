@@ -295,21 +295,31 @@ body {
     min-height: calc(100vh - 70px);
 }
 
-/* Sidebar */
+/* Sidebar - Overlay Mode */
 .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
     width: 320px;
-    min-width: 200px;
-    max-width: 500px;
+    height: 100vh;
     background-color: var(--bg-secondary);
-    border-right: none;
-    flex-shrink: 0;
+    border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    z-index: 160;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
 }
 
-/* Sidebar Resize Handle */
+.sidebar.open {
+    transform: translateX(0);
+}
+
+/* Sidebar Resize Handle - hidden in overlay mode */
 .sidebar-resize-handle {
+    display: none;
     width: 6px;
     background-color: var(--border-color);
     cursor: col-resize;
@@ -1644,59 +1654,43 @@ label {
 }
 
 /* Responsive adjustments for sidebar */
+/* Responsive: Sidebar overlay adjustments */
 @media (max-width: 1023px) {
-    .app-container {
-        flex-direction: column;
+    .header-left {
+        flex-wrap: wrap;
     }
 
-    .sidebar {
-        width: 100%;
-        flex-direction: row;
-        overflow-x: auto;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-    }
-
-    .sidebar-section {
-        flex-shrink: 0;
-        min-width: 200px;
-        border-bottom: none;
-        border-right: 1px solid var(--border-color);
-    }
-
-    .sidebar-section:last-child {
-        border-right: none;
-    }
-
-    .project-list,
-    .task-type-list {
-        flex-direction: row;
-        gap: 0.5rem;
-    }
-
-    .project-item,
-    .task-type-item {
-        white-space: nowrap;
+    .selected-project-display {
+        max-width: 180px;
     }
 }
 
 @media (max-width: 767px) {
     .sidebar {
-        flex-direction: column;
+        width: 280px;
     }
 
-    .sidebar-section {
-        width: 100%;
-        min-width: auto;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
+    .selected-project-display {
+        max-width: 120px;
+        margin-left: 0.5rem;
+        padding: 0.25rem 0.5rem;
     }
 
-    .project-list,
-    .task-type-list {
-        flex-direction: column;
+    .selected-project-name {
+        font-size: 0.8rem;
+    }
+
+    .sidebar-toggle {
+        width: 32px;
+        height: 32px;
+    }
+
+    .sidebar-toggle svg {
+        width: 18px;
+        height: 18px;
     }
 }
+
 
 /* ============================================================================
    Column Rocket Icon (Done column)

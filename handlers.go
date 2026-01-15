@@ -1329,18 +1329,18 @@ func (h *Handler) HandleResolveConflict(w http.ResponseWriter, r *http.Request) 
 	// Create a special prompt for RALPH to resolve the conflict
 	conflictPrompt := fmt.Sprintf(`MERGE CONFLICT RESOLUTION NEEDED
 
-Der Branch "%s" soll in "%s" gemergt werden, aber es gibt Konflikte.
+The branch "%s" should be merged into "%s", but there are conflicts.
 
-Deine Aufgabe:
-1. Führe 'git fetch origin' aus
-2. Führe 'git rebase origin/%s' aus
-3. Löse alle Konflikte intelligent - behalte die sinnvollste Kombination beider Versionen
-4. Für jeden Konflikt:
-   - Verstehe was beide Seiten ändern wollten
-   - Kombiniere beide Änderungen wenn möglich
-   - Bei echten Widersprüchen: bevorzuge die Feature-Branch Version
-5. Nach dem Lösen: 'git add .' und 'git rebase --continue'
-6. Wenn erfolgreich: Melde "CONFLICT_RESOLVED" am Ende
+Your task:
+1. Run 'git fetch origin'
+2. Run 'git rebase origin/%s'
+3. Resolve all conflicts intelligently - keep the most sensible combination of both versions
+4. For each conflict:
+   - Understand what both sides were trying to change
+   - Combine both changes if possible
+   - For real contradictions: prefer the feature branch version
+5. After resolving: 'git add .' and 'git rebase --continue'
+6. If successful: Report "CONFLICT_RESOLVED" at the end
 
 Original Task: %s
 %s`, task.WorkingBranch, defaultBranch, defaultBranch, task.Title, task.Description)

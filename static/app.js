@@ -19,6 +19,7 @@ $(document).ready(function() {
     let scannedRepos = []; // Scan results
     let collapsedFolders = {}; // Track collapsed state of folders
     let githubUser = null; // GitHub user info (username, avatar_url, etc.)
+    let sidebarOpen = false; // Track sidebar state
 
     // Initialize
     init();
@@ -44,6 +45,167 @@ $(document).ready(function() {
         }
     }
 
+    // ============================================================================
+    // SIDEBAR STATE MANAGEMENT
+    // ============================================================================
+
+    /**
+     * Load saved selected project from localStorage
+     * @returns {string} Project ID or empty string for all projects
+     */
+    function loadSelectedProject() {
+        try {
+            return localStorage.getItem('grinder-selected-project') || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /**
+     * Save selected project to localStorage
+     * @param {string} projectId - Project ID or empty string for all projects
+     */
+    function saveSelectedProject(projectId) {
+        try {
+            localStorage.setItem('grinder-selected-project', projectId);
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    /**
+     * Load sidebar state from localStorage
+     * @returns {boolean} true if sidebar should be open, false otherwise
+     */
+    function loadSidebarState() {
+        try {
+            return localStorage.getItem('grinder-sidebar-open') === 'true';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * Save sidebar state to localStorage
+     * @param {boolean} isOpen - Whether sidebar is open
+     */
+    function saveSidebarState(isOpen) {
+        try {
+            localStorage.setItem('grinder-sidebar-open', isOpen ? 'true' : 'false');
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    /**
+     * Open the sidebar
+     */
+    function openSidebar() {
+        sidebarOpen = true;
+        $('#sidebar').addClass('open');
+        $('#sidebarOverlay').addClass('active');
+        saveSidebarState(true);
+    }
+
+    /**
+     * Close the sidebar
+     */
+    function closeSidebar() {
+        sidebarOpen = false;
+        $('#sidebar').removeClass('open');
+        $('#sidebarOverlay').removeClass('active');
+        saveSidebarState(false);
+    }
+
+    /**
+     * Toggle sidebar open/closed
+     */
+    function toggleSidebar() {
+        if (sidebarOpen) {
+            closeSidebar();
+        } else {
+            openSidebar();
+        }
+    }
+
+    /**
+     * Update the selected project display in header
+     * @param {string} projectId - Project ID or empty string for all projects
+     */
+    function updateSelectedProjectDisplay(projectId) {
+        let displayName = 'All Projects';
+        let displayTitle = 'All Projects';
+
+        if (projectId) {
+            const project = projects.find(p => p.id === projectId);
+            if (project) {
+                displayName = project.name;
+                displayTitle = project.path || project.name;
+            } else {
+                // Project no longer exists, fallback to all projects
+                selectedProjectFilter = '';
+                saveSelectedProject('');
+            }
+        }
+
+        $('#selectedProjectName').text(displayName).attr('title', displayTitle);
+    }
+
+    /**
+     * Select a project and update UI
+     * @param {string} projectId - Project ID or empty string for all projects
+     * @param {boolean} closeSidebarAfter - Whether to close sidebar after selection
+     */
+    function selectProject(projectId, closeSidebarAfter) {
+        selectedProjectFilter = projectId;
+        saveSelectedProject(projectId);
+
+        // Update sidebar active state
+        $('.project-item').removeClass('active');
+        $(`.project-item[data-project-id="${projectId}"]`).addClass('active');
+
+        // Update header display
+        updateSelectedProjectDisplay(projectId);
+
+        // Filter tasks
+        renderAllTasks();
+
+        // Close sidebar if requested
+        if (closeSidebarAfter !== false) {
+            closeSidebar();
+        }
+    }
+
+    /**
+     * Initialize sidebar state from localStorage
+     */
+    function initSidebarState() {
+        // Load saved project selection
+        const savedProject = loadSelectedProject();
+        selectedProjectFilter = savedProject;
+
+        // Validate saved project exists (if not empty)
+        if (savedProject) {
+            const projectExists = projects.some(p => p.id === savedProject);
+            if (!projectExists) {
+                selectedProjectFilter = '';
+                saveSelectedProject('');
+            }
+        }
+
+        // Update header display
+        updateSelectedProjectDisplay(selectedProjectFilter);
+
+        // Sidebar defaults to closed - only open if explicitly saved as open
+        sidebarOpen = loadSidebarState();
+        if (sidebarOpen) {
+            $('#sidebar').addClass('open');
+            $('#sidebarOverlay').addClass('active');
+        }
+    }
+
+    // ============================================================================
+
     function init() {
         loadCollapsedState();
         loadConfig();
@@ -65,7 +227,7 @@ $(document).ready(function() {
                 checkGithubConnection();
             })
             .fail(function(xhr) {
-                showToast('Fehler beim Laden der Konfiguration', 'error');
+                showToast('Error loading configuration', 'error');
             });
     }
 
@@ -75,9 +237,11 @@ $(document).ready(function() {
                 projects = data || [];
                 renderProjectList();
                 populateProjectSelect();
+                // Initialize sidebar state after projects are loaded
+                initSidebarState();
             })
             .fail(function(xhr) {
-                showToast('Fehler beim Laden der Projekte', 'error');
+                showToast('Error loading projects', 'error');
             });
     }
 
@@ -89,7 +253,7 @@ $(document).ready(function() {
                 populateTaskTypeSelect();
             })
             .fail(function(xhr) {
-                showToast('Fehler beim Laden der Task-Typen', 'error');
+                showToast('Error loading task types', 'error');
             });
     }
 
@@ -100,7 +264,7 @@ $(document).ready(function() {
                 renderAllTasks();
             })
             .fail(function(xhr) {
-                showToast('Fehler beim Laden der Tasks', 'error');
+                showToast('Error loading tasks', 'error');
             });
     }
 
@@ -122,10 +286,10 @@ $(document).ready(function() {
                 renderAllTasks();
             }
             closeModal();
-            showToast(isNew ? 'Task erstellt' : 'Task gespeichert', 'success');
+            showToast(isNew ? 'Task created' : 'Task saved', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Speichern';
+            const msg = xhr.responseJSON?.error || 'Error saving';
             showToast(msg, 'error');
         });
     }
@@ -139,10 +303,10 @@ $(document).ready(function() {
             tasks = tasks.filter(t => t.id !== taskId);
             renderAllTasks();
             closeModal();
-            showToast('Task geloescht', 'success');
+            showToast('Task deleted', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Loeschen';
+            const msg = xhr.responseJSON?.error || 'Error deleting';
             showToast(msg, 'error');
         });
     }
@@ -164,7 +328,7 @@ $(document).ready(function() {
             }
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Aktualisieren';
+            const msg = xhr.responseJSON?.error || 'Error updating';
             showToast(msg, 'error');
             renderAllTasks();
         });
@@ -191,13 +355,13 @@ $(document).ready(function() {
         })
         .done(function(data) {
             config = data;
-            showToast('Einstellungen gespeichert', 'success');
+            showToast('Settings saved', 'success');
             closeSettingsModal();
             // Re-check GitHub connection after saving
             checkGithubConnection();
         })
         .fail(function(xhr) {
-            showToast('Fehler beim Speichern der Einstellungen', 'error');
+            showToast('Error saving settings', 'error');
         });
     }
 
@@ -223,10 +387,10 @@ $(document).ready(function() {
             renderProjectList();
             populateProjectSelect();
             closeProjectModal();
-            showToast(isNew ? 'Projekt erstellt' : 'Projekt gespeichert', 'success');
+            showToast(isNew ? 'Project created' : 'Project saved', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Speichern';
+            const msg = xhr.responseJSON?.error || 'Error saving';
             showToast(msg, 'error');
         });
     }
@@ -241,10 +405,10 @@ $(document).ready(function() {
             renderProjectList();
             populateProjectSelect();
             closeProjectModal();
-            showToast('Projekt geloescht', 'success');
+            showToast('Project deleted', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Loeschen';
+            const msg = xhr.responseJSON?.error || 'Error deleting';
             showToast(msg, 'error');
         });
     }
@@ -274,7 +438,7 @@ $(document).ready(function() {
             $('#newBranchRule').val('');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Hinzufuegen';
+            const msg = xhr.responseJSON?.error || 'Error adding';
             showToast(msg, 'error');
         });
     }
@@ -289,7 +453,7 @@ $(document).ready(function() {
             renderBranchRules();
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Loeschen';
+            const msg = xhr.responseJSON?.error || 'Error deleting';
             showToast(msg, 'error');
         });
     }
@@ -316,10 +480,10 @@ $(document).ready(function() {
             renderTaskTypeList();
             populateTaskTypeSelect();
             closeTaskTypeModal();
-            showToast(isNew ? 'Task-Typ erstellt' : 'Task-Typ gespeichert', 'success');
+            showToast(isNew ? 'Task type created' : 'Task type saved', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Speichern';
+            const msg = xhr.responseJSON?.error || 'Error saving';
             showToast(msg, 'error');
         });
     }
@@ -334,17 +498,17 @@ $(document).ready(function() {
             renderTaskTypeList();
             populateTaskTypeSelect();
             closeTaskTypeModal();
-            showToast('Task-Typ geloescht', 'success');
+            showToast('Task type deleted', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Loeschen';
+            const msg = xhr.responseJSON?.error || 'Error deleting';
             showToast(msg, 'error');
         });
     }
 
     // Scan Projects
     function scanProjects(basePath, maxDepth) {
-        $('#btnStartScan').prop('disabled', true).text('Scanne...');
+        $('#btnStartScan').prop('disabled', true).text('Scanning...');
         $.ajax({
             url: '/api/projects/scan',
             method: 'POST',
@@ -359,11 +523,11 @@ $(document).ready(function() {
             $('#btnImportScan').removeClass('hidden');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Scannen';
+            const msg = xhr.responseJSON?.error || 'Error scanning';
             showToast(msg, 'error');
         })
         .always(function() {
-            $('#btnStartScan').prop('disabled', false).text('Scannen');
+            $('#btnStartScan').prop('disabled', false).text('Scan');
         });
     }
 
@@ -374,7 +538,7 @@ $(document).ready(function() {
         });
 
         if (selected.length === 0) {
-            showToast('Keine Repositories ausgewaehlt', 'error');
+            showToast('No repositories selected', 'error');
             return;
         }
 
@@ -406,7 +570,7 @@ $(document).ready(function() {
                 renderProjectList();
                 populateProjectSelect();
                 closeScanModal();
-                showToast(`${imported} Projekte importiert` + (failed > 0 ? `, ${failed} fehlgeschlagen` : ''), imported > 0 ? 'success' : 'error');
+                showToast(`${imported} projects imported` + (failed > 0 ? `, ${failed} failed` : ''), imported > 0 ? 'success' : 'error');
             }
         }
     }
@@ -417,10 +581,10 @@ $(document).ready(function() {
             .done(function() {
                 $('#btnPause').addClass('hidden');
                 $('#btnResume').removeClass('hidden');
-                showToast('Prozess pausiert', 'success');
+                showToast('Process paused', 'success');
             })
             .fail(function(xhr) {
-                const msg = xhr.responseJSON?.error || 'Fehler beim Pausieren';
+                const msg = xhr.responseJSON?.error || 'Error pausing';
                 showToast(msg, 'error');
             });
     }
@@ -430,10 +594,10 @@ $(document).ready(function() {
             .done(function() {
                 $('#btnResume').addClass('hidden');
                 $('#btnPause').removeClass('hidden');
-                showToast('Prozess fortgesetzt', 'success');
+                showToast('Process resumed', 'success');
             })
             .fail(function(xhr) {
-                const msg = xhr.responseJSON?.error || 'Fehler beim Fortsetzen';
+                const msg = xhr.responseJSON?.error || 'Error resuming';
                 showToast(msg, 'error');
             });
     }
@@ -441,10 +605,10 @@ $(document).ready(function() {
     function stopTask(taskId) {
         $.post('/api/tasks/' + taskId + '/stop')
             .done(function() {
-                showToast('Prozess gestoppt', 'success');
+                showToast('Process stopped', 'success');
             })
             .fail(function(xhr) {
-                const msg = xhr.responseJSON?.error || 'Fehler beim Stoppen';
+                const msg = xhr.responseJSON?.error || 'Error stopping';
                 showToast(msg, 'error');
             });
     }
@@ -458,10 +622,10 @@ $(document).ready(function() {
         })
         .done(function() {
             $('#feedbackInput').val('');
-            showToast('Feedback gesendet', 'success');
+            showToast('Feedback sent', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Senden';
+            const msg = xhr.responseJSON?.error || 'Error sending';
             showToast(msg, 'error');
         });
     }
@@ -551,20 +715,20 @@ $(document).ready(function() {
                 `<div class="conflict-file"><i class="fas fa-file-code"></i> ${f.path}</div>`
             ).join('');
         } else {
-            filesHtml = '<div class="conflict-file"><i class="fas fa-question-circle"></i> Konflikt-Dateien konnten nicht ermittelt werden</div>';
+            filesHtml = '<div class="conflict-file"><i class="fas fa-question-circle"></i> Conflict files could not be determined</div>';
         }
 
         const modalHtml = `
             <div class="modal-overlay" id="conflictModal">
                 <div class="modal conflict-modal">
                     <div class="modal-header">
-                        <h3><i class="fas fa-exclamation-triangle" style="color: #f0ad4e;"></i> Merge-Konflikt</h3>
+                        <h3><i class="fas fa-exclamation-triangle" style="color: #f0ad4e;"></i> Merge Conflict</h3>
                         <button class="close-btn" onclick="$('#conflictModal').remove()">&times;</button>
                     </div>
                     <div class="modal-body">
                         <p class="conflict-message">
-                            Der Branch <code>${conflict.working_branch}</code> kann nicht automatisch in
-                            <code>${conflict.target_branch}</code> gemergt werden.
+                            The branch <code>${conflict.working_branch}</code> cannot be automatically merged into
+                            <code>${conflict.target_branch}</code>.
                         </p>
 
                         <div class="conflict-task-info">
@@ -572,7 +736,7 @@ $(document).ready(function() {
                         </div>
 
                         <div class="conflict-files-section">
-                            <h4><i class="fas fa-folder-open"></i> Betroffene Dateien:</h4>
+                            <h4><i class="fas fa-folder-open"></i> Affected Files:</h4>
                             <div class="conflict-files-list">
                                 ${filesHtml}
                             </div>
@@ -580,19 +744,19 @@ $(document).ready(function() {
 
                         <div class="conflict-actions">
                             <button class="btn btn-primary btn-resolve-ralph" data-task-id="${conflict.task_id}">
-                                <i class="fas fa-robot"></i> RALPH lösen lassen
+                                <i class="fas fa-robot"></i> Let RALPH resolve
                             </button>
                             <button class="btn btn-secondary btn-resolve-manual" data-task-id="${conflict.task_id}">
-                                <i class="fas fa-terminal"></i> Manuell lösen
+                                <i class="fas fa-terminal"></i> Resolve manually
                             </button>
                             <button class="btn btn-outline" onclick="$('#conflictModal').remove()">
-                                <i class="fas fa-times"></i> Später
+                                <i class="fas fa-times"></i> Later
                             </button>
                         </div>
 
                         <div class="conflict-hint">
                             <i class="fas fa-info-circle"></i>
-                            <span>RALPH wird versuchen, die Konflikte intelligent zu lösen und beide Versionen zu kombinieren.</span>
+                            <span>RALPH will try to resolve the conflicts intelligently and combine both versions.</span>
                         </div>
                     </div>
                 </div>
@@ -618,40 +782,40 @@ $(document).ready(function() {
         });
 
         // Play warning sound or show notification
-        showToast('Merge-Konflikt erkannt!', 'warning');
+        showToast('Merge conflict detected!', 'warning');
     }
 
     function resolveConflictWithRalph(taskId) {
-        showToast('RALPH löst den Konflikt...', 'info');
+        showToast('RALPH is resolving the conflict...', 'info');
 
         $.post(`/api/tasks/${taskId}/resolve-conflict`)
             .done(function(data) {
-                showToast('RALPH arbeitet am Konflikt', 'success');
+                showToast('RALPH is working on the conflict', 'success');
             })
             .fail(function(xhr) {
-                const error = xhr.responseJSON?.error || 'Unbekannter Fehler';
-                showToast(`Fehler: ${error}`, 'error');
+                const error = xhr.responseJSON?.error || 'Unknown error';
+                showToast(`Error: ${error}`, 'error');
             });
     }
 
     function showManualResolveInstructions(conflict) {
         const instructions = `
             <div class="manual-resolve-instructions">
-                <h4>Manuelle Konfliktlösung</h4>
-                <p>Führe folgende Befehle im Terminal aus:</p>
+                <h4>Manual Conflict Resolution</h4>
+                <p>Run the following commands in the terminal:</p>
                 <pre><code>cd [project-path]
 git checkout ${conflict.working_branch}
 git fetch origin
 git rebase origin/${conflict.target_branch}
-# Löse die Konflikte in den markierten Dateien
+# Resolve the conflicts in the marked files
 git add .
 git rebase --continue
-# Wenn erfolgreich, verschiebe den Task erneut nach Done</code></pre>
+# If successful, move the task to Done again</code></pre>
             </div>
         `;
 
         $('.conflict-modal .modal-body').html(instructions +
-            '<button class="btn btn-outline" onclick="$(\'#conflictModal\').remove()" style="margin-top: 16px;">Schließen</button>'
+            '<button class="btn btn-outline" onclick="$(\'#conflictModal\').remove()" style="margin-top: 16px;">Close</button>'
         );
     }
 
@@ -1206,7 +1370,7 @@ git rebase --continue
         $list.empty();
 
         if (branchRules.length === 0) {
-            $list.html('<span style="color: var(--text-secondary); font-size: 0.8rem;">Keine Regeln definiert</span>');
+            $list.html('<span style="color: var(--text-secondary); font-size: 0.8rem;">No rules defined</span>');
             return;
         }
 
@@ -1225,7 +1389,7 @@ git rebase --continue
         $list.empty();
 
         if (scannedRepos.length === 0) {
-            $list.html('<div style="padding: 1rem; text-align: center; color: var(--text-secondary);">Keine Repositories gefunden</div>');
+            $list.html('<div style="padding: 1rem; text-align: center; color: var(--text-secondary);">No repositories found</div>');
             return;
         }
 
@@ -1241,6 +1405,34 @@ git rebase --continue
 
     // Event Listeners
     function setupEventListeners() {
+        // ============================================================================
+        // SIDEBAR CONTROLS
+        // ============================================================================
+
+        // Sidebar toggle button
+        $('#sidebarToggle').on('click', function() {
+            toggleSidebar();
+        });
+
+        // Click on selected project display in header opens sidebar
+        $('#selectedProjectDisplay').on('click', function() {
+            openSidebar();
+        });
+
+        // Sidebar overlay click (outside sidebar)
+        $('#sidebarOverlay').on('click', function() {
+            closeSidebar();
+        });
+
+        // Escape key closes sidebar
+        $(document).on('keydown', function(e) {
+            if (e.key === 'Escape' && sidebarOpen) {
+                closeSidebar();
+            }
+        });
+
+        // ============================================================================
+
         // Settings button (in user dropdown)
         $('#btnOpenSettings').on('click', function() {
             $('#userProfile').removeClass('open');
@@ -1264,7 +1456,7 @@ git rebase --continue
             const $input = $('#settingsGithubToken');
             if ($input.attr('type') === 'password') {
                 $input.attr('type', 'text');
-                $(this).text('Verbergen');
+                $(this).text('Hide');
             } else {
                 $input.attr('type', 'password');
                 $(this).text('Zeigen');
@@ -1337,14 +1529,14 @@ git rebase --continue
             }
         });
 
-        // Project click in sidebar
+        // Project click in sidebar - select project and close sidebar
         $(document).on('click', '.project-item', function(e) {
-            // Check for double-click to edit
+            // Don't select project if clicking action buttons
+            if ($(e.target).closest('.project-actions').length) {
+                return;
+            }
             const projectId = $(this).data('project-id');
-            selectedProjectFilter = projectId;
-            $('.project-item').removeClass('active');
-            $(this).addClass('active');
-            renderAllTasks();
+            selectProject(projectId, true); // true = close sidebar after selection
         });
 
         // Double-click to edit project
@@ -1394,7 +1586,7 @@ git rebase --continue
         // Refresh projects button
         $('#btnRefreshProjects').on('click', function() {
             loadProjects();
-            showToast('Projekte aktualisiert', 'success');
+            showToast('Projects refreshed', 'success');
         });
 
         // Scan projects button
@@ -1476,7 +1668,7 @@ git rebase --continue
         });
 
         $('#btnDelete').on('click', function() {
-            if (confirm('Task wirklich loeschen?')) {
+            if (confirm('Really delete this task?')) {
                 deleteTask(currentTaskId);
             }
         });
@@ -1501,7 +1693,7 @@ git rebase --continue
         });
 
         $('#btnDeleteProject').on('click', function() {
-            if (confirm('Projekt wirklich loeschen? Alle verknuepften Tasks verlieren die Projektzuordnung.')) {
+            if (confirm('Really delete this project? All linked tasks will lose their project association.')) {
                 deleteProject(currentProjectId);
             }
         });
@@ -1526,7 +1718,7 @@ git rebase --continue
             if (basePath) {
                 scanProjects(basePath, maxDepth);
             } else {
-                showToast('Bitte Basis-Verzeichnis angeben', 'error');
+                showToast('Please specify base directory', 'error');
             }
         });
 
@@ -1542,7 +1734,7 @@ git rebase --continue
         });
 
         $('#btnDeleteTaskType').on('click', function() {
-            if (confirm('Task-Typ wirklich loeschen?')) {
+            if (confirm('Really delete this task type?')) {
                 deleteTaskType(currentTaskTypeId);
             }
         });
@@ -1562,7 +1754,7 @@ git rebase --continue
         });
 
         $('#btnStop').on('click', function() {
-            if (confirm('Prozess wirklich stoppen?')) {
+            if (confirm('Really stop this process?')) {
                 stopTask(currentTaskId);
             }
         });
@@ -1697,7 +1889,7 @@ git rebase --continue
         $(document).on('click', '.btn-init-git', function(e) {
             e.stopPropagation();
             const projectId = $(this).closest('.project-item').data('project-id');
-            if (confirm('Git Repository initialisieren?')) {
+            if (confirm('Initialize Git repository?')) {
                 initializeGit(projectId);
             }
         });
@@ -1829,7 +2021,7 @@ git rebase --continue
     // Task Modal Functions
     function openNewTaskModal(status) {
         currentTaskId = null;
-        $('#modalTitle').text('Neuer Task');
+        $('#modalTitle').text('New Task');
         $('#taskId').val('');
         $('#taskTitle').val('');
         $('#taskDescription').val('');
@@ -1863,7 +2055,7 @@ git rebase --continue
 
     function openEditTaskModal(task) {
         currentTaskId = task.id;
-        $('#modalTitle').text('Task bearbeiten');
+        $('#modalTitle').text('Edit Task');
         $('#taskId').val(task.id);
         $('#taskTitle').val(task.title);
         $('#taskDescription').val(task.description || '');
@@ -1922,21 +2114,21 @@ git rebase --continue
 
             // Update labels based on task status
             if (task.status === 'progress') {
-                $('#feedbackLabel').text('Feedback an Claude:');
-                $('#feedbackHelp').text('Sendet Feedback an den laufenden Prozess');
-                $('#btnFeedback').text('Senden');
+                $('#feedbackLabel').text('Feedback to Claude:');
+                $('#feedbackHelp').text('Send feedback to running process');
+                $('#btnFeedback').text('Send');
             } else if (task.status === 'done' || task.status === 'review') {
-                $('#feedbackLabel').text('Task fortsetzen:');
-                $('#feedbackHelp').text('Startet Claude erneut mit deiner Nachricht');
-                $('#btnFeedback').text('Fortsetzen');
+                $('#feedbackLabel').text('Continue task:');
+                $('#feedbackHelp').text('Restarts Claude with your message');
+                $('#btnFeedback').text('Resume');
             } else if (task.status === 'blocked') {
-                $('#feedbackLabel').text('Task entsperren:');
-                $('#feedbackHelp').text('Startet Claude erneut mit deiner Nachricht');
+                $('#feedbackLabel').text('Unblock task:');
+                $('#feedbackHelp').text('Restarts Claude with your message');
                 $('#btnFeedback').text('Entsperren');
             } else {
-                $('#feedbackLabel').text('Nachricht an Claude:');
-                $('#feedbackHelp').text('Startet Claude mit deiner Nachricht');
-                $('#btnFeedback').text('Starten');
+                $('#feedbackLabel').text('Message to Claude:');
+                $('#feedbackHelp').text('Starts Claude with your message');
+                $('#btnFeedback').text('Start');
             }
         } else {
             $('#feedbackSection').addClass('hidden');
@@ -2010,7 +2202,7 @@ git rebase --continue
         };
 
         if (!taskData.title) {
-            showToast('Titel ist erforderlich', 'error');
+            showToast('Title is required', 'error');
             return;
         }
 
@@ -2026,7 +2218,7 @@ git rebase --continue
     function openNewProjectModal() {
         currentProjectId = null;
         branchRules = [];
-        $('#projectModalTitle').text('Neues Projekt');
+        $('#projectModalTitle').text('New Project');
         $('#projectId').val('');
         $('#projectName').val('');
         $('#projectPath').val('');
@@ -2038,7 +2230,7 @@ git rebase --continue
 
     function openEditProjectModal(project) {
         currentProjectId = project.id;
-        $('#projectModalTitle').text('Projekt bearbeiten');
+        $('#projectModalTitle').text('Edit Project');
         $('#projectId').val(project.id);
         $('#projectName').val(project.name);
         $('#projectPath').val(project.path);
@@ -2062,7 +2254,7 @@ git rebase --continue
         };
 
         if (!projectData.name || !projectData.path) {
-            showToast('Name und Pfad sind erforderlich', 'error');
+            showToast('Name and path are required', 'error');
             return;
         }
 
@@ -2093,7 +2285,7 @@ git rebase --continue
     // Task Type Modal Functions
     function openNewTaskTypeModal() {
         currentTaskTypeId = null;
-        $('#taskTypeModalTitle').text('Neuer Task-Typ');
+        $('#taskTypeModalTitle').text('New Task Type');
         $('#taskTypeId').val('');
         $('#taskTypeName').val('');
         $('#taskTypeColor').val('#58a6ff');
@@ -2104,7 +2296,7 @@ git rebase --continue
 
     function openEditTaskTypeModal(type) {
         currentTaskTypeId = type.id;
-        $('#taskTypeModalTitle').text('Task-Typ bearbeiten');
+        $('#taskTypeModalTitle').text('Edit Task Type');
         $('#taskTypeId').val(type.id);
         $('#taskTypeName').val(type.name);
         $('#taskTypeColor').val(type.color);
@@ -2132,7 +2324,7 @@ git rebase --continue
         };
 
         if (!typeData.name) {
-            showToast('Name ist erforderlich', 'error');
+            showToast('Name is required', 'error');
             return;
         }
 
@@ -2145,9 +2337,9 @@ git rebase --continue
 
     function showDeleteTaskTypeConfirmation(type) {
         const taskCount = tasks.filter(t => t.task_type_id === type.id).length;
-        let message = `Task-Typ "${type.name}" wirklich loeschen?`;
+        let message = `Really delete task type "${type.name}"?`;
         if (taskCount > 0) {
-            message += `\n\n${taskCount} Task(s) mit diesem Typ werden typlos.`;
+            message += `\n\n${taskCount} task(s) with this type will become untyped.`;
         }
 
         if (confirm(message)) {
@@ -2172,10 +2364,10 @@ git rebase --continue
             renderTaskTypeList();
             populateTaskTypeSelect();
             renderAllTasks();
-            showToast('Task-Typ geloescht', 'success');
+            showToast('Task type deleted', 'success');
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Loeschen';
+            const msg = xhr.responseJSON?.error || 'Error deleting';
             showToast(msg, 'error');
         });
     }
@@ -2232,7 +2424,7 @@ git rebase --continue
                 renderFolderList(data.directories, data.is_repo);
             })
             .fail(function(xhr) {
-                const msg = xhr.responseJSON?.error || 'Fehler beim Laden';
+                const msg = xhr.responseJSON?.error || 'Error loading';
                 showToast(msg, 'error');
             });
     }
@@ -2242,7 +2434,7 @@ git rebase --continue
         $list.empty();
 
         if (!directories || directories.length === 0) {
-            $list.html('<div class="folder-empty">Keine Unterordner</div>');
+            $list.html('<div class="folder-empty">No subfolders</div>');
             return;
         }
 
@@ -2267,12 +2459,12 @@ git rebase --continue
         })
         .done(function(data) {
             $('#newFolderName').val('');
-            showToast('Ordner erstellt', 'success');
+            showToast('Folder created', 'success');
             loadFolder(folderBrowserPath);
             selectedFolderPath = data.path;
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Erstellen';
+            const msg = xhr.responseJSON?.error || 'Error creating';
             showToast(msg, 'error');
         });
     }
@@ -2290,11 +2482,11 @@ git rebase --continue
         })
         .done(function(data) {
             config = data;
-            showToast('GitHub Token gespeichert', 'success');
+            showToast('GitHub token saved', 'success');
             closeGithubModal();
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Speichern';
+            const msg = xhr.responseJSON?.error || 'Error saving';
             showToast(msg, 'error');
         });
     }
@@ -2302,7 +2494,7 @@ git rebase --continue
     function validateGithubToken() {
         const token = $('#githubToken').val().trim();
         if (!token) {
-            showToast('Bitte Token eingeben', 'error');
+            showToast('Please enter token', 'error');
             return;
         }
 
@@ -2320,14 +2512,14 @@ git rebase --continue
                         .removeClass('hidden error')
                         .addClass('success')
                         .html('<span class="github-status-icon">&#10003;</span>' +
-                              '<span>Verbunden als <strong>' + escapeHtml(data.username) + '</strong></span>');
+                              '<span>Connected as <strong>' + escapeHtml(data.username) + '</strong></span>');
                 })
                 .fail(function(xhr) {
                     $('#githubStatus')
                         .removeClass('hidden success')
                         .addClass('error')
                         .html('<span class="github-status-icon">&#10060;</span>' +
-                              '<span>Token ungueltig</span>');
+                              '<span>Token invalid</span>');
                 });
         });
     }
@@ -2338,16 +2530,16 @@ git rebase --continue
                 const idx = projects.findIndex(p => p.id === project.id);
                 if (idx !== -1) projects[idx] = project;
                 renderProjectList();
-                showToast('Git Repository initialisiert', 'success');
+                showToast('Git repository initialized', 'success');
             })
             .fail(function(xhr) {
-                const msg = xhr.responseJSON?.error || 'Fehler bei Git Init';
+                const msg = xhr.responseJSON?.error || 'Error initializing Git';
                 showToast(msg, 'error');
             });
     }
 
     function createGithubRepo(projectId, repoName, description, isPrivate) {
-        $('#btnCreateRepo').prop('disabled', true).text('Erstelle...');
+        $('#btnCreateRepo').prop('disabled', true).text('Creating...');
 
         $.ajax({
             url: '/api/projects/' + projectId + '/github-repo',
@@ -2360,12 +2552,12 @@ git rebase --continue
             })
         })
         .done(function(data) {
-            showToast('GitHub Repository erstellt: ' + data.repo_url, 'success');
+            showToast('GitHub repository created: ' + data.repo_url, 'success');
             closeCreateRepoModal();
             loadProjects();
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Fehler beim Erstellen';
+            const msg = xhr.responseJSON?.error || 'Error creating';
             showToast(msg, 'error');
         })
         .always(function() {
@@ -2384,13 +2576,13 @@ git rebase --continue
             data: JSON.stringify({ commit_message: commitMessage })
         })
         .done(function(data) {
-            const msg = 'Deployment erfolgreich!' + (data.commit_hash ? ' Commit: ' + data.commit_hash.substring(0, 7) : '');
+            const msg = 'Deployment successful!' + (data.commit_hash ? ' Commit: ' + data.commit_hash.substring(0, 7) : '');
             showToast(msg, 'success');
             closeDeployModal();
             loadTasks();
         })
         .fail(function(xhr) {
-            const msg = xhr.responseJSON?.error || 'Deployment fehlgeschlagen';
+            const msg = xhr.responseJSON?.error || 'Deployment failed';
             showToast(msg, 'error');
             $('#deployStatus').addClass('hidden');
         })
@@ -2458,7 +2650,7 @@ git rebase --continue
 
         // Reset token input to password type
         $('#settingsGithubToken').attr('type', 'password');
-        $('#btnToggleToken').text('Zeigen');
+        $('#btnToggleToken').text('Show');
 
         // Reset to first tab
         $('.settings-tab').removeClass('active');
@@ -2479,7 +2671,7 @@ git rebase --continue
     function validateSettingsToken() {
         const token = $('#settingsGithubToken').val().trim();
         if (!token) {
-            showToast('Bitte Token eingeben', 'error');
+            showToast('Please enter token', 'error');
             return;
         }
 
@@ -2497,7 +2689,7 @@ git rebase --continue
                         .removeClass('hidden error')
                         .addClass('success')
                         .html('<span class="github-status-icon">&#10003;</span>' +
-                              '<span>Verbunden als <strong>' + escapeHtml(data.username) + '</strong></span>');
+                              '<span>Connected as <strong>' + escapeHtml(data.username) + '</strong></span>');
                     // Update user info
                     updateUserProfile(data);
                 })
@@ -2506,7 +2698,7 @@ git rebase --continue
                         .removeClass('hidden success')
                         .addClass('error')
                         .html('<span class="github-status-icon">&#10060;</span>' +
-                              '<span>Token ungueltig</span>');
+                              '<span>Token invalid</span>');
                 });
         });
     }
@@ -2555,7 +2747,7 @@ git rebase --continue
             $disconnectBtn.removeClass('hidden');
         } else {
             // User is not connected
-            $name.text('Nicht verbunden');
+            $name.text('Not connected');
             $avatar.html('<svg class="user-icon-default" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>');
             $link.addClass('hidden');
             $connectBtn.removeClass('hidden');
@@ -2574,11 +2766,11 @@ git rebase --continue
             config = data;
             githubUser = null;
             updateUserProfile(null);
-            showToast('GitHub Verbindung getrennt', 'success');
+            showToast('GitHub connection disconnected', 'success');
             $('#userProfile').removeClass('open');
         })
         .fail(function(xhr) {
-            showToast('Fehler beim Trennen', 'error');
+            showToast('Error disconnecting', 'error');
         });
     }
 });
