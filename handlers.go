@@ -163,7 +163,8 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	movingToDone := req.Status != nil && *req.Status == StatusDone
 
 	// Check if moving to review - need to commit and push branch for review
-	movingToReview := req.Status != nil && *req.Status == StatusReview && oldStatus == StatusProgress
+	// Push when moving TO review from any status (not just from progress)
+	movingToReview := req.Status != nil && *req.Status == StatusReview && oldStatus != StatusReview
 
 	// If moving away from progress, stop RALPH
 	if req.Status != nil && *req.Status != StatusProgress && oldStatus == StatusProgress {
