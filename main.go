@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+// Version ist die aktuelle Version von GRINDER
+const Version = "0.1.0"
+
 // Standardkonfiguration für den Server
 const (
 	defaultPort   = "3333"       // Standard-Port für den HTTP-Server
