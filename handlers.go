@@ -155,8 +155,11 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 
 	oldStatus := currentTask.Status
 
-	// Check if moving to progress - need to start RALPH
+	// Check if moving to progress - need to start RALPH and create branch
 	startRalph := req.Status != nil && *req.Status == StatusProgress && oldStatus != StatusProgress
+
+	// Check if moving to done - need to merge and push
+	movingToDone := req.Status != nil && *req.Status == StatusDone
 
 	// If moving away from progress, stop RALPH
 	if req.Status != nil && *req.Status != StatusProgress && oldStatus == StatusProgress {
@@ -168,6 +171,48 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		if err := h.db.ResetTaskForProgress(id); err != nil {
 			h.writeError(w, http.StatusInternalServerError, "Failed to reset task: "+err.Error())
 			return
+		}
+	}
+
+	// Handle branch creation when moving to progress
+	if startRalph {
+		projectDir := currentTask.ProjectDir
+		if projectDir == "" && currentTask.ProjectID != "" {
+			project, _ := h.db.GetProject(currentTask.ProjectID)
+			if project != nil {
+				projectDir = project.Path
+			}
+		}
+		if projectDir != "" && IsGitRepository(projectDir) {
+			branchName, err := CreateWorkingBranch(projectDir, currentTask.ID, currentTask.Title)
+			if err != nil {
+				h.writeError(w, http.StatusInternalServerError, "Failed to create working branch: "+err.Error())
+				return
+			}
+			// Update working branch in request
+			req.WorkingBranch = &branchName
+		}
+	}
+
+	// Handle merge when moving to done
+	if movingToDone && currentTask.WorkingBranch != "" {
+		projectDir := currentTask.ProjectDir
+		if projectDir == "" && currentTask.ProjectID != "" {
+			project, _ := h.db.GetProject(currentTask.ProjectID)
+			if project != nil {
+				projectDir = project.Path
+			}
+		}
+		if projectDir != "" && IsGitRepository(projectDir) {
+			err := MergeWorkingBranchToDefault(projectDir, currentTask.WorkingBranch)
+			if err != nil {
+				// Merge failed - move to blocked instead
+				blockedStatus := StatusBlocked
+				req.Status = &blockedStatus
+				errorMsg := "Merge failed: " + err.Error()
+				h.db.UpdateTaskError(id, errorMsg)
+				// Continue to update the task with blocked status
+			}
 		}
 	}
 
@@ -184,6 +229,11 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	if startRalph {
 		config, _ := h.db.GetConfig()
 		go h.runner.Start(task, config)
+	}
+
+	// Broadcast deployment success if we moved to done and had a branch
+	if movingToDone && currentTask.WorkingBranch != "" && task.Status == StatusDone {
+		h.hub.BroadcastDeploymentSuccess(task.ID, "Task deployed successfully!")
 	}
 
 	h.writeJSON(w, http.StatusOK, task)

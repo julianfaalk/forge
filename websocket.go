@@ -137,6 +137,16 @@ func (h *Hub) BroadcastBranchChange(taskID string, branch string) {
 	h.broadcastJSON(msg)
 }
 
+// BroadcastDeploymentSuccess sends a deployment success notification
+func (h *Hub) BroadcastDeploymentSuccess(taskID string, message string) {
+	msg := WSMessage{
+		Type:    "deployment_success",
+		TaskID:  taskID,
+		Message: message,
+	}
+	h.broadcastJSON(msg)
+}
+
 func (h *Hub) broadcastJSON(msg WSMessage) {
 	data, err := jsonMarshal(msg)
 	if err != nil {

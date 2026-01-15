@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -124,9 +125,14 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Print startup banner
+	fmt.Println()
+	fmt.Println("  GRINDER v1.0")
+	fmt.Printf("  Server running on http://localhost:%s\n", port)
+	fmt.Println()
+
 	// Start server in a goroutine
 	go func() {
-		log.Printf("GRINDER is running on http://localhost:%s", port)
 		if err := server.ListenAndServe(); err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}

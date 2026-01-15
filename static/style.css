@@ -71,31 +71,6 @@ body {
     font-size: 0.875rem;
 }
 
-/* Header Icon Button */
-.header-icon-btn {
-    background: transparent;
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 0.5rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s ease;
-    color: var(--text-secondary);
-}
-
-.header-icon-btn:hover {
-    background-color: var(--bg-tertiary);
-    color: var(--text-primary);
-    border-color: var(--text-secondary);
-}
-
-.settings-icon {
-    width: 20px;
-    height: 20px;
-}
-
 /* User Profile */
 .user-profile {
     position: relative;
@@ -1362,20 +1337,28 @@ label {
 }
 
 .task-branch-badge {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     padding: 0.15rem 0.4rem;
     border-radius: 4px;
     background: var(--bg-tertiary);
     color: var(--text-secondary);
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0.2rem;
+    max-width: 140px;
+    cursor: default;
 }
 
 .task-branch-badge .branch-icon {
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     flex-shrink: 0;
+}
+
+.task-branch-badge .branch-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .task-card-meta {
@@ -1598,64 +1581,36 @@ label {
 }
 
 /* ============================================================================
-   Deployment Bar
+   Column Rocket Icon (Done column)
    ============================================================================ */
 
-.deployment-bar {
-    position: fixed;
-    bottom: 0;
-    left: 320px;
-    right: 0;
-    height: 110px;
-    background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-    border-top: 2px dashed var(--border-color);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 50;
-    transition: all 0.3s ease;
+.column-rocket {
+    display: inline-block;
+    margin-right: 0.25rem;
+    transition: transform 0.3s ease;
 }
 
-.deployment-bar.drag-over {
-    background: linear-gradient(135deg, rgba(63, 185, 80, 0.2) 0%, rgba(63, 185, 80, 0.3) 100%);
-    border-top: 2px solid var(--success);
-    transform: translateY(-5px);
+.column-rocket.launching {
+    animation: rocket-launch 1.5s ease-out;
 }
 
-.deployment-bar.drag-over .deployment-icon {
-    animation: rocket 0.5s ease infinite;
-}
-
-@keyframes rocket {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-5px); }
-}
-
-.deployment-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-}
-
-.deployment-icon {
-    font-size: 2rem;
-}
-
-.deployment-text {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.deployment-hint {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-}
-
-/* Adjust board to account for deployment bar */
-.board {
-    padding-bottom: 130px;
+@keyframes rocket-launch {
+    0% {
+        transform: translateY(0) rotate(0deg);
+        opacity: 1;
+    }
+    50% {
+        transform: translateY(-20px) rotate(-15deg);
+        opacity: 0.8;
+    }
+    75% {
+        transform: translateY(-30px) rotate(-30deg) scale(1.2);
+        opacity: 0.5;
+    }
+    100% {
+        transform: translateY(0) rotate(0deg);
+        opacity: 1;
+    }
 }
 
 /* ============================================================================
@@ -1788,33 +1743,6 @@ label {
     flex-shrink: 0;
 }
 
-/* ============================================================================
-   Responsive adjustments for deployment bar
-   ============================================================================ */
-
-@media (max-width: 1023px) {
-    .deployment-bar {
-        left: 0;
-    }
-}
-
-@media (max-width: 767px) {
-    .deployment-bar {
-        height: 60px;
-    }
-
-    .deployment-icon {
-        font-size: 1.5rem;
-    }
-
-    .deployment-text {
-        font-size: 0.875rem;
-    }
-
-    .deployment-hint {
-        display: none;
-    }
-}
 
 /* ============================================================================
    Settings Modal
@@ -1897,15 +1825,6 @@ label {
         gap: 0.5rem;
     }
 
-    .header-icon-btn {
-        padding: 0.4rem;
-    }
-
-    .settings-icon {
-        width: 18px;
-        height: 18px;
-    }
-
     .user-avatar {
         width: 28px;
         height: 28px;
@@ -1915,15 +1834,6 @@ label {
 @media (max-width: 767px) {
     .header {
         padding: 0.75rem 1rem;
-    }
-
-    .header-icon-btn {
-        padding: 0.35rem;
-    }
-
-    .settings-icon {
-        width: 16px;
-        height: 16px;
     }
 
     .user-avatar {

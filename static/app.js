@@ -514,6 +514,24 @@ $(document).ready(function() {
             case 'branch_change':
                 updateTaskBranch(msg.task_id, msg.branch);
                 break;
+            case 'deployment_success':
+                showDeploymentSuccess(msg.task_id, msg.message);
+                break;
+        }
+    }
+
+    function showDeploymentSuccess(taskId, message) {
+        // Find the task and show success animation
+        const task = tasks.find(t => t.id === taskId);
+        const taskTitle = task ? task.title : 'Task';
+        showToast(`Deployed: ${taskTitle}`, 'success');
+
+        // Trigger rocket animation on Done column
+        const $doneColumn = $('.column[data-status="done"]');
+        const $rocketIcon = $doneColumn.find('.column-rocket');
+        if ($rocketIcon.length) {
+            $rocketIcon.addClass('launching');
+            setTimeout(() => $rocketIcon.removeClass('launching'), 1500);
         }
     }
 
@@ -766,8 +784,14 @@ $(document).ready(function() {
         const taskType = task.task_type || taskTypes.find(t => t.id === task.task_type_id);
         const typeBadge = taskType ?
             `<span class="task-type-badge" style="background-color: ${taskType.color}">${escapeHtml(taskType.name)}</span>` : '';
-        const branchBadge = task.working_branch ?
-            `<span class="task-branch-badge"><svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>${escapeHtml(task.working_branch)}</span>` : '';
+        // Show shortened branch name with full name in tooltip
+        let branchBadge = '';
+        if (task.working_branch) {
+            const shortBranch = task.working_branch.length > 20
+                ? task.working_branch.substring(0, 17) + '...'
+                : task.working_branch;
+            branchBadge = `<span class="task-branch-badge" title="${escapeHtml(task.working_branch)}"><svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg><span class="branch-name">${escapeHtml(shortBranch)}</span></span>`;
+        }
 
         const $card = $(`
             <div class="task-card" data-id="${task.id}" draggable="true">
@@ -1084,8 +1108,11 @@ $(document).ready(function() {
 
     // Event Listeners
     function setupEventListeners() {
-        // Settings button
-        $('#btnSettings').on('click', openSettingsModal);
+        // Settings button (in user dropdown)
+        $('#btnOpenSettings').on('click', function() {
+            $('#userProfile').removeClass('open');
+            openSettingsModal();
+        });
         $('#btnSaveSettings').on('click', saveSettings);
         $('#btnValidateSettings').on('click', validateSettingsToken);
         $('.settings-close').on('click', closeSettingsModal);
@@ -1589,50 +1616,12 @@ $(document).ready(function() {
             $(this).removeClass('dragging');
         });
 
-        // Deployment bar drag and drop
-        $('#deploymentBar').on('dragover', function(e) {
-            e.preventDefault();
-            e.originalEvent.dataTransfer.dropEffect = 'move';
-            $(this).addClass('drag-over');
-        });
-
-        $('#deploymentBar').on('dragleave', function() {
-            $(this).removeClass('drag-over');
-        });
-
-        $('#deploymentBar').on('drop', function(e) {
-            e.preventDefault();
-            $(this).removeClass('drag-over');
-
-            const taskId = e.originalEvent.dataTransfer.getData('text/plain');
-            const task = tasks.find(t => t.id === taskId);
-
-            if (task) {
-                // Check if task has a project directory
-                if (!task.project_dir && !task.project_id) {
-                    showToast('Task hat kein Projektverzeichnis', 'error');
-                    return;
-                }
-
-                // Check if project is a git repo
-                if (task.project_id) {
-                    const project = projects.find(p => p.id === task.project_id);
-                    if (project && !project.is_git_repo) {
-                        showToast('Projekt ist kein Git Repository. Bitte erst initialisieren.', 'error');
-                        return;
-                    }
-                }
-
-                openDeployModal(taskId);
-            }
-        });
     }
 
     // Sidebar Resize Functionality
     function setupSidebarResize() {
         const sidebar = document.querySelector('.sidebar');
         const resizeHandle = document.getElementById('sidebarResizeHandle');
-        const deploymentBar = document.getElementById('deploymentBar');
 
         if (!sidebar || !resizeHandle) return;
 
@@ -1645,9 +1634,6 @@ $(document).ready(function() {
             const width = parseInt(savedWidth);
             if (width >= 200 && width <= 500) {
                 sidebar.style.width = width + 'px';
-                if (deploymentBar) {
-                    deploymentBar.style.left = width + 6 + 'px';
-                }
             }
         }
 
@@ -1673,11 +1659,6 @@ $(document).ready(function() {
             newWidth = Math.max(200, Math.min(500, newWidth));
 
             sidebar.style.width = newWidth + 'px';
-
-            // Update deployment bar position
-            if (deploymentBar) {
-                deploymentBar.style.left = newWidth + 6 + 'px';
-            }
         });
 
         document.addEventListener('mouseup', function() {

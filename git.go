@@ -356,3 +356,211 @@ func SetRemoteOrigin(path string, url string) error {
 	}
 	return nil
 }
+
+// GetDefaultBranch returns the default branch name (main or master)
+func GetDefaultBranch(path string) string {
+	// Check if main branch exists
+	branches, err := ListBranches(path)
+	if err != nil {
+		return "main" // Default fallback
+	}
+	for _, branch := range branches {
+		if branch == "main" {
+			return "main"
+		}
+	}
+	for _, branch := range branches {
+		if branch == "master" {
+			return "master"
+		}
+	}
+	return "main" // Default fallback
+}
+
+// CheckoutBranch checks out an existing branch
+func CheckoutBranch(path string, branchName string) error {
+	cmd := exec.Command("git", "checkout", branchName)
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git checkout failed: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// CreateAndCheckoutBranch creates a new branch from the current HEAD and checks it out
+func CreateAndCheckoutBranch(path string, branchName string) error {
+	cmd := exec.Command("git", "checkout", "-b", branchName)
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git checkout -b failed: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// BranchExists checks if a branch exists locally
+func BranchExists(path string, branchName string) bool {
+	branches, err := ListBranches(path)
+	if err != nil {
+		return false
+	}
+	for _, branch := range branches {
+		if branch == branchName {
+			return true
+		}
+	}
+	return false
+}
+
+// MergeBranch merges a source branch into the current branch
+func MergeBranch(path string, sourceBranch string) error {
+	cmd := exec.Command("git", "merge", sourceBranch, "--no-edit")
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git merge failed: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// DeleteBranch deletes a local branch
+func DeleteBranch(path string, branchName string) error {
+	cmd := exec.Command("git", "branch", "-d", branchName)
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git branch delete failed: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// Slugify converts a string to a URL-friendly slug
+func Slugify(s string) string {
+	// Convert to lowercase
+	result := strings.ToLower(s)
+
+	// Replace umlauts and special characters
+	replacements := map[string]string{
+		"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+		"Ä": "ae", "Ö": "oe", "Ü": "ue",
+	}
+	for old, new := range replacements {
+		result = strings.ReplaceAll(result, old, new)
+	}
+
+	// Replace non-alphanumeric characters with dashes
+	var sb strings.Builder
+	lastWasDash := false
+	for _, r := range result {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			sb.WriteRune(r)
+			lastWasDash = false
+		} else if !lastWasDash {
+			sb.WriteRune('-')
+			lastWasDash = true
+		}
+	}
+	result = sb.String()
+
+	// Trim leading/trailing dashes
+	result = strings.Trim(result, "-")
+
+	// Limit length
+	if len(result) > 50 {
+		result = result[:50]
+		result = strings.TrimRight(result, "-")
+	}
+
+	return result
+}
+
+// GenerateWorkingBranchName creates a branch name for a task
+func GenerateWorkingBranchName(taskID string, taskTitle string) string {
+	slug := Slugify(taskTitle)
+	// Use first 8 chars of task ID for uniqueness
+	shortID := taskID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	return fmt.Sprintf("working/%s-%s", shortID, slug)
+}
+
+// CreateWorkingBranch creates a working branch for a task based on the default branch
+func CreateWorkingBranch(path string, taskID string, taskTitle string) (string, error) {
+	if !IsGitRepository(path) {
+		return "", fmt.Errorf("not a git repository: %s", path)
+	}
+
+	// Get the default branch
+	defaultBranch := GetDefaultBranch(path)
+
+	// First checkout the default branch to ensure we're starting from there
+	if err := CheckoutBranch(path, defaultBranch); err != nil {
+		return "", fmt.Errorf("failed to checkout %s: %v", defaultBranch, err)
+	}
+
+	// Generate branch name
+	branchName := GenerateWorkingBranchName(taskID, taskTitle)
+
+	// Check if branch already exists
+	if BranchExists(path, branchName) {
+		// Branch exists, just check it out
+		if err := CheckoutBranch(path, branchName); err != nil {
+			return "", fmt.Errorf("failed to checkout existing branch %s: %v", branchName, err)
+		}
+		return branchName, nil
+	}
+
+	// Create and checkout the new branch
+	if err := CreateAndCheckoutBranch(path, branchName); err != nil {
+		return "", fmt.Errorf("failed to create branch %s: %v", branchName, err)
+	}
+
+	return branchName, nil
+}
+
+// MergeWorkingBranchToDefault merges a working branch into the default branch and pushes
+func MergeWorkingBranchToDefault(path string, workingBranch string) error {
+	if !IsGitRepository(path) {
+		return fmt.Errorf("not a git repository: %s", path)
+	}
+
+	// Check for uncommitted changes
+	hasChanges, err := HasUncommittedChanges(path)
+	if err != nil {
+		return fmt.Errorf("failed to check for uncommitted changes: %v", err)
+	}
+	if hasChanges {
+		// Auto-commit any pending changes
+		_, err := CommitAllChanges(path, "Auto-commit before merge")
+		if err != nil {
+			return fmt.Errorf("failed to commit pending changes: %v", err)
+		}
+	}
+
+	// Get the default branch
+	defaultBranch := GetDefaultBranch(path)
+
+	// Checkout default branch
+	if err := CheckoutBranch(path, defaultBranch); err != nil {
+		return fmt.Errorf("failed to checkout %s: %v", defaultBranch, err)
+	}
+
+	// Merge the working branch
+	if err := MergeBranch(path, workingBranch); err != nil {
+		// Revert on failure - go back to working branch
+		CheckoutBranch(path, workingBranch)
+		return fmt.Errorf("merge conflict or error: %v", err)
+	}
+
+	// Push to remote
+	if err := PushToRemote(path); err != nil {
+		return fmt.Errorf("failed to push: %v", err)
+	}
+
+	// Optionally delete the working branch (we'll keep it for now)
+	// DeleteBranch(path, workingBranch)
+
+	return nil
+}
