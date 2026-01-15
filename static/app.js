@@ -46,6 +46,93 @@ $(document).ready(function() {
     }
 
     // ============================================================================
+    // THEME MANAGEMENT
+    // ============================================================================
+
+    // System preference media query
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+    /**
+     * Gets the saved theme preference from localStorage
+     * @returns {string} 'dark' | 'light' | 'system'
+     */
+    function getSavedTheme() {
+        try {
+            return localStorage.getItem('grinder-theme') || 'dark';
+        } catch (e) {
+            return 'dark';
+        }
+    }
+
+    /**
+     * Saves theme preference to localStorage
+     * @param {string} theme - 'dark' | 'light' | 'system'
+     */
+    function saveTheme(theme) {
+        try {
+            localStorage.setItem('grinder-theme', theme);
+        } catch (e) {
+            // Ignore storage errors
+        }
+    }
+
+    /**
+     * Resolves the effective theme based on preference
+     * @param {string} preference - 'dark' | 'light' | 'system'
+     * @returns {string} 'dark' | 'light'
+     */
+    function resolveTheme(preference) {
+        if (preference === 'system') {
+            return systemThemeQuery.matches ? 'dark' : 'light';
+        }
+        return preference;
+    }
+
+    /**
+     * Applies theme to the document
+     * @param {string} theme - 'dark' | 'light'
+     */
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+    }
+
+    /**
+     * Initializes the theme on page load
+     * Called immediately to prevent flash
+     */
+    function initTheme() {
+        const preference = getSavedTheme();
+        const theme = resolveTheme(preference);
+        applyTheme(theme);
+    }
+
+    /**
+     * Sets a new theme preference (called when user changes settings)
+     * @param {string} preference - 'dark' | 'light' | 'system'
+     */
+    function setThemePreference(preference) {
+        saveTheme(preference);
+        const theme = resolveTheme(preference);
+        applyTheme(theme);
+    }
+
+    /**
+     * Listen for system theme changes when using 'system' preference
+     */
+    function setupSystemThemeListener() {
+        systemThemeQuery.addEventListener('change', function(e) {
+            const preference = getSavedTheme();
+            if (preference === 'system') {
+                applyTheme(e.matches ? 'dark' : 'light');
+            }
+        });
+    }
+
+    // Initialize theme immediately (before DOMContentLoaded)
+    initTheme();
+    setupSystemThemeListener();
+
+    // ============================================================================
     // SIDEBAR STATE MANAGEMENT
     // ============================================================================
 
@@ -216,6 +303,17 @@ $(document).ready(function() {
         setupEventListeners();
         setupDragAndDrop();
         setupSidebarResize();
+
+        // Remove no-transitions class after initial load to enable smooth theme transitions
+        // Use a small delay to ensure all initial rendering is complete
+        setTimeout(function() {
+            document.documentElement.classList.remove('no-transitions');
+        }, 100);
+
+        // Update theme toggle label to show current theme
+        const labels = { 'dark': 'Dark', 'light': 'Light', 'system': 'System' };
+        const currentTheme = getSavedTheme();
+        $('.theme-toggle-label').text(labels[currentTheme]);
     }
 
     // API Functions
@@ -1451,6 +1549,12 @@ git rebase --continue
             $('#settings-' + tab).addClass('active');
         });
 
+        // Theme selector - live preview when changed
+        $(document).on('change', 'input[name="themeChoice"]', function() {
+            const newTheme = $(this).val();
+            setThemePreference(newTheme);
+        });
+
         // Token visibility toggle
         $('#btnToggleToken').on('click', function() {
             const $input = $('#settingsGithubToken');
@@ -1494,9 +1598,26 @@ git rebase --continue
         });
 
         $('#btnDisconnectGithub').on('click', function() {
-            if (confirm('GitHub Verbindung trennen?')) {
+            if (confirm('Disconnect from GitHub?')) {
                 disconnectGithub();
             }
+        });
+
+        // Quick theme toggle in dropdown - cycles through dark -> light -> system
+        $('#btnToggleTheme').on('click', function() {
+            const currentTheme = getSavedTheme();
+            let nextTheme;
+            if (currentTheme === 'dark') {
+                nextTheme = 'light';
+            } else if (currentTheme === 'light') {
+                nextTheme = 'system';
+            } else {
+                nextTheme = 'dark';
+            }
+            setThemePreference(nextTheme);
+            // Update the label to show current mode
+            const labels = { 'dark': 'Dark', 'light': 'Light', 'system': 'System' };
+            $('.theme-toggle-label').text(labels[nextTheme]);
         });
 
         // Add task buttons
@@ -2647,6 +2768,11 @@ git rebase --continue
         $('#settingsDefaultBranch').val(config.default_branch || 'main');
         $('#settingsDefaultPriority').val(config.default_priority || 2);
         $('#settingsAutoArchive').val(config.auto_archive_days || 0);
+
+        // Set theme radio button based on saved preference
+        const savedTheme = getSavedTheme();
+        $('input[name="themeChoice"]').prop('checked', false);
+        $('input[name="themeChoice"][value="' + savedTheme + '"]').prop('checked', true);
 
         // Reset token input to password type
         $('#settingsGithubToken').attr('type', 'password');

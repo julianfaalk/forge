@@ -1,5 +1,8 @@
-/* CSS Variables */
-:root {
+/* CSS Variables - Theme System */
+
+/* Dark theme (default) */
+:root,
+[data-theme="dark"] {
     --bg-primary: #0d1117;
     --bg-secondary: #161b22;
     --bg-tertiary: #21262d;
@@ -7,12 +10,69 @@
     --text-primary: #c9d1d9;
     --text-secondary: #8b949e;
     --accent: #58a6ff;
+    --accent-hover: #79c0ff;
     --success: #3fb950;
+    --success-hover: #56d364;
     --warning: #d29922;
+    --warning-hover: #e3b341;
     --danger: #f85149;
+    --danger-hover: #ff7b72;
     --priority-high: #f85149;
     --priority-medium: #d29922;
     --priority-low: #3fb950;
+    --scrollbar-bg: #161b22;
+    --scrollbar-thumb: #30363d;
+    --scrollbar-thumb-hover: #484f58;
+    --input-bg: #0d1117;
+    --modal-overlay: rgba(0, 0, 0, 0.7);
+    --focus-ring: rgba(88, 166, 255, 0.3);
+    --highlight-bg: rgba(88, 166, 255, 0.15);
+    --highlight-border: rgba(88, 166, 255, 0.3);
+    --gradient-accent: #1f6feb;
+    --gradient-accent-hover: #79b8ff;
+}
+
+/* Light theme */
+[data-theme="light"] {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #eaeef2;
+    --border-color: #d0d7de;
+    --text-primary: #24292f;
+    --text-secondary: #57606a;
+    --accent: #0969da;
+    --accent-hover: #0550ae;
+    --success: #1a7f37;
+    --success-hover: #116329;
+    --warning: #9a6700;
+    --warning-hover: #7d4e00;
+    --danger: #cf222e;
+    --danger-hover: #a40e26;
+    --priority-high: #cf222e;
+    --priority-medium: #9a6700;
+    --priority-low: #1a7f37;
+    --scrollbar-bg: #f6f8fa;
+    --scrollbar-thumb: #d0d7de;
+    --scrollbar-thumb-hover: #afb8c1;
+    --input-bg: #ffffff;
+    --modal-overlay: rgba(0, 0, 0, 0.4);
+    --focus-ring: rgba(9, 105, 218, 0.3);
+    --highlight-bg: rgba(9, 105, 218, 0.12);
+    --highlight-border: rgba(9, 105, 218, 0.3);
+    --gradient-accent: #218bff;
+    --gradient-accent-hover: #0550ae;
+}
+
+/* Theme transition for smooth switching */
+body,
+body * {
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* Disable transitions during initial load to prevent flash */
+.no-transitions,
+.no-transitions * {
+    transition: none !important;
 }
 
 /* Reset and Base */
@@ -405,7 +465,7 @@ body {
 }
 
 .project-item.active {
-    background-color: rgba(88, 166, 255, 0.15);
+    background-color: var(--highlight-bg);
     border-left: 3px solid var(--accent);
     margin-left: -3px;
 }
@@ -780,7 +840,7 @@ body {
 }
 
 .btn-primary:hover {
-    background-color: #4393e6;
+    background-color: var(--accent-hover);
 }
 
 .btn-success {
@@ -789,7 +849,7 @@ body {
 }
 
 .btn-success:hover {
-    background-color: #2ea043;
+    background-color: var(--success-hover);
 }
 
 .btn-warning {
@@ -798,7 +858,7 @@ body {
 }
 
 .btn-warning:hover {
-    background-color: #bb8a1a;
+    background-color: var(--warning-hover);
 }
 
 .btn-danger {
@@ -807,7 +867,7 @@ body {
 }
 
 .btn-danger:hover {
-    background-color: #da3633;
+    background-color: var(--danger-hover);
 }
 
 .btn-add {
@@ -862,7 +922,7 @@ textarea:focus,
 select:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+    box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 textarea {
@@ -886,7 +946,7 @@ label {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(0, 0, 0, 0.7);
+    background-color: var(--modal-overlay);
     z-index: 1000;
     justify-content: center;
     align-items: flex-start;
@@ -1096,7 +1156,7 @@ label {
 }
 
 @keyframes highlight {
-    from { background-color: rgba(88, 166, 255, 0.2); }
+    from { background-color: var(--highlight-bg); }
     to { background-color: transparent; }
 }
 
@@ -1410,7 +1470,7 @@ label {
 }
 
 .folder-item.selected {
-    background-color: rgba(88, 166, 255, 0.2);
+    background-color: var(--highlight-bg);
     border-left: 3px solid var(--accent);
 }
 
@@ -2084,8 +2144,8 @@ label {
 }
 
 .conflict-hint {
-    background: rgba(88, 166, 255, 0.1);
-    border: 1px solid rgba(88, 166, 255, 0.3);
+    background: var(--highlight-bg);
+    border: 1px solid var(--highlight-border);
     border-radius: 6px;
     padding: 0.75rem 1rem;
     font-size: 0.85rem;
@@ -2130,4 +2190,87 @@ label {
     font-size: 0.85rem;
     color: var(--text-primary);
     line-height: 1.6;
+}
+
+/* ============================================================================
+   Theme Selector
+   ============================================================================ */
+
+.theme-selector {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.5rem;
+}
+
+.theme-option {
+    flex: 1;
+    cursor: pointer;
+}
+
+.theme-option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.theme-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    border-radius: 8px;
+    border: 2px solid var(--border-color);
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.theme-option input[type="radio"]:checked + .theme-preview {
+    border-color: var(--accent);
+}
+
+.theme-option input[type="radio"]:focus + .theme-preview {
+    box-shadow: 0 0 0 2px var(--accent);
+}
+
+.theme-preview-dark {
+    background-color: #0d1117;
+    color: #c9d1d9;
+}
+
+.theme-preview-light {
+    background-color: #ffffff;
+    color: #24292f;
+    border-color: #d0d7de;
+}
+
+.theme-preview-system {
+    background: linear-gradient(135deg, #0d1117 50%, #ffffff 50%);
+    color: var(--text-primary);
+}
+
+.theme-icon {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Theme toggle button in dropdown - show appropriate icon based on theme */
+.theme-icon-light {
+    display: none;
+}
+
+.theme-icon-dark {
+    display: block;
+}
+
+[data-theme="light"] .theme-icon-light {
+    display: block;
+}
+
+[data-theme="light"] .theme-icon-dark {
+    display: none;
+}
+
+.theme-label {
+    font-size: 0.875rem;
+    font-weight: 500;
 }

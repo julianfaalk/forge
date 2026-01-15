@@ -6,6 +6,23 @@
     <title>GRINDER - Autonomous Development Board</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
+    <!-- Theme initialization - MUST run before body renders to prevent flash -->
+    <script>
+        (function() {
+            try {
+                var savedTheme = localStorage.getItem('grinder-theme') || 'dark';
+                var theme = savedTheme;
+                if (savedTheme === 'system') {
+                    theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                }
+                document.documentElement.setAttribute('data-theme', theme);
+                // Add no-transitions class to prevent initial flash
+                document.documentElement.classList.add('no-transitions');
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+            }
+        })();
+    </script>
 </head>
 <body>
     <header class="header">
@@ -49,6 +66,15 @@
                             <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/>
                         </svg>
                         Connect GitHub
+                    </button>
+                    <button class="user-dropdown-item" id="btnToggleTheme">
+                        <svg class="dropdown-item-icon theme-icon-dark" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.389 5.389 0 0 1-4.4 2.26 5.403 5.403 0 0 1-3.14-9.8c-.44-.06-.9-.1-1.36-.1z"/>
+                        </svg>
+                        <svg class="dropdown-item-icon theme-icon-light" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zM2 13h2c.55 0 1-.45 1-1s-.45-1-1-1H2c-.55 0-1 .45-1 1s.45 1 1 1zm18 0h2c.55 0 1-.45 1-1s-.45-1-1-1h-2c-.55 0-1 .45-1 1s.45 1 1 1zM11 2v2c0 .55.45 1 1 1s1-.45 1-1V2c0-.55-.45-1-1-1s-1 .45-1 1zm0 18v2c0 .55.45 1 1 1s1-.45 1-1v-2c0-.55-.45-1-1-1s-1 .45-1 1zM5.99 4.58a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0s.39-1.03 0-1.41L5.99 4.58zm12.37 12.37a.996.996 0 0 0-1.41 0 .996.996 0 0 0 0 1.41l1.06 1.06c.39.39 1.03.39 1.41 0a.996.996 0 0 0 0-1.41l-1.06-1.06zm1.06-10.96a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06zM7.05 18.36a.996.996 0 0 0 0-1.41.996.996 0 0 0-1.41 0l-1.06 1.06c-.39.39-.39 1.03 0 1.41s1.03.39 1.41 0l1.06-1.06z"/>
+                        </svg>
+                        <span class="theme-toggle-label">Theme</span>
                     </button>
                     <button class="user-dropdown-item" id="btnOpenSettings">
                         <svg class="dropdown-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -438,6 +464,7 @@
             <div class="modal-body">
                 <div class="settings-tabs">
                     <button class="settings-tab active" data-tab="general">General</button>
+                    <button class="settings-tab" data-tab="appearance">Appearance</button>
                     <button class="settings-tab" data-tab="github">GitHub</button>
                     <button class="settings-tab" data-tab="tasks">Tasks</button>
                 </div>
@@ -463,6 +490,37 @@
                         <label for="settingsMaxIterations">Max Iterations (Default)</label>
                         <input type="number" id="settingsMaxIterations" value="10" min="1" max="100">
                         <p class="help-text">Maximum number of RALPH iterations for new tasks</p>
+                    </div>
+                </div>
+
+                <!-- Appearance Settings -->
+                <div class="settings-content" id="settings-appearance">
+                    <div class="form-group">
+                        <label>Color Scheme</label>
+                        <div class="theme-selector">
+                            <label class="theme-option">
+                                <input type="radio" name="themeChoice" value="dark" checked>
+                                <span class="theme-preview theme-preview-dark">
+                                    <span class="theme-icon">&#127769;</span>
+                                    <span class="theme-label">Dark</span>
+                                </span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="themeChoice" value="light">
+                                <span class="theme-preview theme-preview-light">
+                                    <span class="theme-icon">&#9728;</span>
+                                    <span class="theme-label">Light</span>
+                                </span>
+                            </label>
+                            <label class="theme-option">
+                                <input type="radio" name="themeChoice" value="system">
+                                <span class="theme-preview theme-preview-system">
+                                    <span class="theme-icon">&#128187;</span>
+                                    <span class="theme-label">System</span>
+                                </span>
+                            </label>
+                        </div>
+                        <p class="help-text">Choose between dark, light, or system-based color scheme</p>
                     </div>
                 </div>
 
