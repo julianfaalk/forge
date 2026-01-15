@@ -1382,6 +1382,7 @@ label {
     align-items: center;
     gap: 0.75rem;
     margin-bottom: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .log-header h3 {
@@ -1398,8 +1399,58 @@ label {
     color: white;
 }
 
-.auto-scroll-label {
+.log-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     margin-left: auto;
+    flex-wrap: wrap;
+}
+
+.log-search {
+    width: 150px;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--input-bg);
+    color: var(--text-primary);
+}
+
+.log-search:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.log-filters {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.filter-btn {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.7rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.filter-btn:hover {
+    background-color: var(--bg-secondary);
+    border-color: var(--accent);
+}
+
+.filter-btn.active {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    color: white;
+}
+
+.auto-scroll-label {
     display: flex;
     align-items: center;
     gap: 0.25rem;
@@ -1411,29 +1462,20 @@ label {
     background-color: var(--bg-primary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    padding: 0.75rem;
+    padding: 0;
     font-family: "SF Mono", Monaco, Consolas, monospace;
     font-size: 0.75rem;
     line-height: 1.5;
-    max-height: 300px;
+    max-height: 400px;
     overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
-.log-output .new-line {
-    animation: highlight 1s ease;
-}
-
-@keyframes highlight {
-    from { background-color: var(--highlight-bg); }
-    to { background-color: transparent; }
 }
 
 .log-output .waiting {
     color: var(--text-secondary);
     font-style: italic;
     animation: blink 1.5s ease-in-out infinite;
+    padding: 1rem;
+    display: block;
 }
 
 @keyframes blink {
@@ -1441,20 +1483,513 @@ label {
     50% { opacity: 0.4; }
 }
 
-/* Log Entry Formatting */
-.log-entry {
-    padding: 0.5rem 0;
+/* Iteration Blocks */
+.iteration-block {
     border-bottom: 1px solid var(--border-color);
 }
 
-.log-entry:last-child {
+.iteration-block:last-child {
     border-bottom: none;
 }
 
-.log-icon {
+.iteration-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background-color: var(--bg-secondary);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 0.15s ease;
+}
+
+.iteration-header:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.iteration-toggle {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    transition: transform 0.2s ease;
+    width: 1rem;
+    text-align: center;
+}
+
+.iteration-block.collapsed .iteration-toggle {
+    transform: rotate(-90deg);
+}
+
+.iteration-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+}
+
+.iteration-summary {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    margin-left: 0.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0; /* Allow shrinking */
+    max-width: 300px; /* Don't take too much space */
+}
+
+.iteration-status {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.iteration-status.completed {
+    background-color: rgba(63, 185, 80, 0.2);
+    color: var(--success);
+}
+
+.iteration-status.running {
+    background-color: rgba(88, 166, 255, 0.2);
+    color: var(--accent);
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.iteration-status.error {
+    background-color: rgba(248, 81, 73, 0.2);
+    color: var(--danger);
+}
+
+.iteration-duration {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    min-width: 50px;
+    text-align: right;
+}
+
+/* Iteration stats (tool/error counts) */
+.iteration-stats {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-left: auto;
     margin-right: 0.5rem;
 }
 
+.iteration-stats .stat-tool,
+.iteration-stats .stat-error {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+    cursor: help;
+}
+
+.iteration-stats .stat-tool {
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.iteration-stats .stat-error {
+    background-color: rgba(248, 81, 73, 0.15);
+    color: var(--danger);
+}
+
+.iteration-content {
+    padding: 0.5rem 1rem 0.75rem 2rem;
+    border-left: 2px solid var(--border-color);
+    margin-left: 1rem;
+}
+
+.iteration-block.collapsed .iteration-content {
+    display: none;
+}
+
+/* Log Entry Types */
+.log-entry {
+    padding: 0.4rem 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    position: relative;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.log-entry.new-line {
+    background-color: var(--highlight-bg);
+}
+
+.log-entry.filtered-out {
+    display: none !important;
+}
+
+.log-entry.search-match {
+    background-color: rgba(210, 153, 34, 0.15);
+}
+
+.log-entry .log-icon {
+    flex-shrink: 0;
+    width: 1.25rem;
+    text-align: center;
+}
+
+.log-entry .log-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.log-entry .log-timestamp {
+    flex-shrink: 0;
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    opacity: 0.7;
+    min-width: 50px;
+    text-align: right;
+}
+
+/* Log Type: System */
+.log-entry.log-type-system {
+    color: var(--accent);
+}
+
+.log-entry.log-type-system .log-content {
+    font-weight: 500;
+}
+
+/* Log Type: Init */
+.log-entry.log-type-init {
+    color: var(--success);
+}
+
+.log-entry.log-type-init code {
+    background: var(--bg-tertiary);
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+}
+
+/* Log Type: Thinking */
+.log-entry.log-type-thinking {
+    color: var(--accent);
+    opacity: 0.75;
+}
+
+.log-entry.log-type-thinking .log-content {
+    font-style: italic;
+}
+
+/* Log Type: Tool */
+.log-entry.log-type-tool {
+    color: var(--text-secondary);
+}
+
+.log-entry.log-type-tool .tool-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.7rem;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    margin-right: 0.5rem;
+}
+
+.log-entry.log-type-tool .tool-info {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+/* Log Type: Output */
+.log-entry.log-type-output {
+    padding-left: 1.5rem;
+}
+
+.log-entry.log-type-output .output-block {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.5rem;
+    overflow: hidden;
+    font-size: 0.7rem;
+}
+
+.log-entry.log-type-output .output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
+    cursor: pointer;
+}
+
+.log-entry.log-type-output .output-line-count {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+}
+
+.log-entry.log-type-output .output-content {
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.log-entry.log-type-output .output-content.collapsed {
+    max-height: 60px;
+    overflow: hidden;
+    position: relative;
+}
+
+.log-entry.log-type-output .output-content.collapsed::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30px;
+    background: linear-gradient(transparent, var(--bg-tertiary));
+}
+
+.log-entry.log-type-output .show-more-btn {
+    font-size: 0.65rem;
+    color: var(--accent);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem 0;
+    margin-top: 0.25rem;
+}
+
+.log-entry.log-type-output .show-more-btn:hover {
+    text-decoration: underline;
+}
+
+.log-entry.log-type-output .exit-code {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.65rem;
+    margin-top: 0.25rem;
+    padding: 0.15rem 0.35rem;
+    border-radius: 3px;
+}
+
+.log-entry.log-type-output .exit-code.success {
+    color: var(--success);
+    background-color: rgba(63, 185, 80, 0.15);
+}
+
+.log-entry.log-type-output .exit-code.error {
+    color: var(--danger);
+    background-color: rgba(248, 81, 73, 0.15);
+}
+
+/* Log Type: Success */
+.log-entry.log-type-success {
+    color: var(--success);
+}
+
+/* Log Type: Error */
+.log-entry.log-type-error {
+    color: var(--danger);
+}
+
+.log-entry.log-type-error .log-content {
+    background-color: rgba(248, 81, 73, 0.1);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    border-left: 2px solid var(--danger);
+}
+
+/* Log Type: Warning */
+.log-entry.log-type-warning {
+    color: var(--warning);
+}
+
+/* Log Type: File Operation */
+.log-entry.log-type-file {
+    color: var(--text-primary);
+}
+
+.log-entry.log-type-file .file-path {
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    background-color: var(--bg-tertiary);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    color: var(--accent);
+}
+
+.log-entry.log-type-file .file-info {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-left: 0.5rem;
+}
+
+/* Progress Indicators */
+.progress-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.progress-dots {
+    display: inline-flex;
+    gap: 3px;
+}
+
+.progress-dots span {
+    width: 4px;
+    height: 4px;
+    background-color: var(--accent);
+    border-radius: 50%;
+    animation: dotPulse 1.4s ease-in-out infinite;
+}
+
+.progress-dots span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.progress-dots span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes dotPulse {
+    0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+    40% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Thinking indicator */
+.thinking-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--accent);
+    opacity: 0.8;
+    padding: 0.5rem 0;
+}
+
+.thinking-indicator .pulsing-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--accent);
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Command block styling */
+.command-block {
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    margin: 0.25rem 0;
+    overflow: hidden;
+}
+
+.command-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    background-color: rgba(0, 0, 0, 0.2);
+    font-size: 0.7rem;
+}
+
+.command-prompt {
+    color: var(--success);
+    font-weight: 600;
+}
+
+.command-text {
+    color: var(--text-primary);
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    word-break: break-all;
+}
+
+.command-description {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-tertiary);
+}
+
+/* Search pattern styling */
+.search-pattern {
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    background-color: var(--bg-tertiary);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    color: var(--warning);
+    margin-right: 0.5rem;
+}
+
+/* Agent badge styling */
+.agent-badge {
+    font-size: 0.6rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    background-color: var(--accent);
+    color: white;
+    margin-left: 0.5rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+/* Web URL styling */
+.web-url {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+/* Edit info styling (line changes) */
+.edit-info {
+    color: var(--warning);
+}
+
+/* Enhanced file info styling */
+.log-entry.log-type-tool .file-info {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    margin-left: 0.5rem;
+    font-style: italic;
+}
+
+/* Search highlight */
+.search-highlight {
+    background-color: var(--warning);
+    color: var(--bg-primary);
+    padding: 0 2px;
+    border-radius: 2px;
+}
+
+/* Legacy compatibility */
 .log-system {
     color: var(--accent);
     font-weight: 500;

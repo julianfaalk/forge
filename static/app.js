@@ -1064,23 +1064,682 @@ git rebase --continue
         );
     }
 
+    // ============================================================================
+    // STRUCTURED LOG SYSTEM
+    // ============================================================================
+
+    // Log state management
+    let logState = {
+        iterations: [],           // Array of iteration objects
+        currentIteration: null,   // Current iteration index
+        entries: [],              // All log entries with metadata
+        filter: 'all',            // Current filter: 'all', 'errors', 'tools', 'hide-thinking'
+        searchQuery: '',          // Current search query
+        startTime: null           // When logging started
+    };
+
+    // Log entry types with icons and colors
+    const LOG_TYPES = {
+        system: { icon: '🔔', class: 'log-type-system' },
+        init: { icon: '🚀', class: 'log-type-init' },
+        thinking: { icon: '💭', class: 'log-type-thinking' },
+        tool: { icon: '🔧', class: 'log-type-tool' },
+        output: { icon: '📝', class: 'log-type-output' },
+        success: { icon: '✅', class: 'log-type-success' },
+        error: { icon: '❌', class: 'log-type-error' },
+        warning: { icon: '⚠️', class: 'log-type-warning' },
+        file: { icon: '📄', class: 'log-type-file' },
+        iteration: { icon: '🔄', class: 'log-type-iteration' }
+    };
+
+    // Reset log state when opening a new task
+    function resetLogState() {
+        logState = {
+            iterations: [],
+            currentIteration: null,
+            entries: [],
+            filter: 'all',
+            searchQuery: '',
+            startTime: Date.now()
+        };
+    }
+
+    // Parse log message and determine type
+    function parseLogEntry(message) {
+        const timestamp = Date.now();
+
+        // Check for GRINDER system messages
+        if (message.startsWith('[GRINDER]')) {
+            return {
+                type: 'system',
+                content: message,
+                timestamp,
+                raw: message
+            };
+        }
+
+        // Check for iteration markers
+        const iterationMatch = message.match(/\[ITERATION\s+(\d+)\]/i);
+        if (iterationMatch) {
+            const iterNum = parseInt(iterationMatch[1]);
+            return {
+                type: 'iteration',
+                iterationNumber: iterNum,
+                content: message.replace(/\[ITERATION\s+\d+\]/i, '').trim(),
+                timestamp,
+                raw: message
+            };
+        }
+
+        // Check for SUCCESS/BLOCKED markers
+        if (message.includes('[SUCCESS]')) {
+            return {
+                type: 'success',
+                content: message.replace('[SUCCESS]', '').trim(),
+                timestamp,
+                raw: message
+            };
+        }
+
+        if (message.includes('[BLOCKED]')) {
+            return {
+                type: 'error',
+                content: message.replace('[BLOCKED]', '').trim(),
+                timestamp,
+                raw: message
+            };
+        }
+
+        // Try to parse as JSON (Claude's structured output)
+        try {
+            const data = JSON.parse(message.trim());
+            return parseJsonLogEntry(data, timestamp, message);
+        } catch (e) {
+            // Check for error patterns in plain text
+            const trimmed = message.trim();
+            if (!trimmed) return null;
+
+            if (/error|Error|ERROR|failed|Failed|FAILED|exception|Exception/i.test(trimmed)) {
+                return {
+                    type: 'error',
+                    content: trimmed,
+                    timestamp,
+                    raw: message
+                };
+            }
+
+            if (/warning|Warning|WARNING|warn|Warn/i.test(trimmed)) {
+                return {
+                    type: 'warning',
+                    content: trimmed,
+                    timestamp,
+                    raw: message
+                };
+            }
+
+            if (/success|Success|SUCCESS|passed|Passed|done|Done|✓|completed/i.test(trimmed)) {
+                return {
+                    type: 'success',
+                    content: trimmed,
+                    timestamp,
+                    raw: message
+                };
+            }
+
+            // Default to plain text
+            return {
+                type: 'text',
+                content: trimmed,
+                timestamp,
+                raw: message
+            };
+        }
+    }
+
+    // Parse JSON log entries from Claude
+    function parseJsonLogEntry(data, timestamp, raw) {
+        switch (data.type) {
+            case 'system':
+                if (data.subtype === 'init') {
+                    return {
+                        type: 'init',
+                        content: `Claude started in ${data.cwd}`,
+                        cwd: data.cwd,
+                        timestamp,
+                        raw
+                    };
+                }
+                return null;
+
+            case 'assistant':
+                const msg = data.message;
+                if (!msg || !msg.content) return null;
+
+                const entries = [];
+                for (const block of msg.content) {
+                    if (block.type === 'text' && block.text) {
+                        entries.push({
+                            type: 'thinking',
+                            content: block.text,
+                            timestamp,
+                            raw
+                        });
+                    }
+                    if (block.type === 'tool_use') {
+                        const toolEntry = parseToolUse(block, timestamp, raw);
+                        if (toolEntry) entries.push(toolEntry);
+                    }
+                }
+                return entries.length === 1 ? entries[0] : (entries.length > 1 ? entries : null);
+
+            case 'user':
+                const content = data.message?.content;
+                if (!content || !Array.isArray(content)) return null;
+
+                for (const block of content) {
+                    if (block.type === 'tool_result') {
+                        return parseToolResult(block, timestamp, raw);
+                    }
+                }
+                return null;
+
+            default:
+                return null;
+        }
+    }
+
+    // Parse tool use entries
+    function parseToolUse(block, timestamp, raw) {
+        const toolName = block.name;
+        let toolInfo = '';
+        let subtype = 'generic';
+        let extraInfo = {};
+
+        switch (toolName) {
+            case 'Write':
+                toolInfo = block.input?.file_path || '';
+                subtype = 'write';
+                // Count lines in content being written
+                if (block.input?.content) {
+                    extraInfo.lineCount = block.input.content.split('\n').length;
+                }
+                break;
+            case 'Edit':
+                toolInfo = block.input?.file_path || '';
+                subtype = 'edit';
+                // Capture old and new string for diff info
+                if (block.input?.old_string && block.input?.new_string) {
+                    const oldLines = block.input.old_string.split('\n').length;
+                    const newLines = block.input.new_string.split('\n').length;
+                    extraInfo.linesRemoved = oldLines;
+                    extraInfo.linesAdded = newLines;
+                    extraInfo.replaceAll = block.input?.replace_all || false;
+                }
+                break;
+            case 'Read':
+                toolInfo = block.input?.file_path || '';
+                subtype = 'read';
+                // Capture offset and limit if specified
+                if (block.input?.offset) extraInfo.offset = block.input.offset;
+                if (block.input?.limit) extraInfo.limit = block.input.limit;
+                break;
+            case 'Bash':
+                toolInfo = block.input?.command || '';
+                subtype = 'bash';
+                return {
+                    type: 'tool',
+                    toolName,
+                    toolInfo,
+                    subtype,
+                    command: block.input?.command,
+                    description: block.input?.description,
+                    timestamp,
+                    raw
+                };
+            case 'TodoWrite':
+                toolInfo = 'Updating task list...';
+                subtype = 'todo';
+                // Count todos if available
+                if (block.input?.todos && Array.isArray(block.input.todos)) {
+                    extraInfo.todoCount = block.input.todos.length;
+                    extraInfo.inProgress = block.input.todos.filter(t => t.status === 'in_progress').length;
+                    extraInfo.completed = block.input.todos.filter(t => t.status === 'completed').length;
+                }
+                break;
+            case 'Glob':
+                toolInfo = block.input?.pattern || '';
+                subtype = 'search';
+                if (block.input?.path) extraInfo.searchPath = block.input.path;
+                break;
+            case 'Grep':
+                toolInfo = block.input?.pattern || '';
+                subtype = 'search';
+                if (block.input?.path) extraInfo.searchPath = block.input.path;
+                if (block.input?.type) extraInfo.fileType = block.input.type;
+                break;
+            case 'WebFetch':
+                toolInfo = block.input?.url || '';
+                subtype = 'web';
+                break;
+            case 'WebSearch':
+                toolInfo = block.input?.query || '';
+                subtype = 'web';
+                break;
+            case 'Task':
+                toolInfo = block.input?.description || 'Subtask';
+                subtype = 'task';
+                if (block.input?.subagent_type) extraInfo.agentType = block.input.subagent_type;
+                break;
+            case 'LSP':
+                toolInfo = block.input?.operation || '';
+                subtype = 'lsp';
+                if (block.input?.filePath) extraInfo.lspFile = block.input.filePath;
+                break;
+            default:
+                toolInfo = JSON.stringify(block.input || {}).substring(0, 100);
+        }
+
+        return {
+            type: 'tool',
+            toolName,
+            toolInfo,
+            subtype,
+            filePath: block.input?.file_path,
+            extraInfo,
+            timestamp,
+            raw
+        };
+    }
+
+    // Parse tool result entries
+    function parseToolResult(block, timestamp, raw) {
+        const result = block.content || '';
+        const isError = block.is_error;
+        const lines = result.split('\n').length;
+
+        if (isError) {
+            return {
+                type: 'error',
+                content: result,
+                isToolResult: true,
+                lineCount: lines,
+                timestamp,
+                raw
+            };
+        }
+
+        // Detect exit codes in output
+        const exitCodeMatch = result.match(/exit code:?\s*(\d+)/i);
+        const exitCode = exitCodeMatch ? parseInt(exitCodeMatch[1]) : null;
+
+        return {
+            type: 'output',
+            content: result,
+            isToolResult: true,
+            lineCount: lines,
+            exitCode,
+            isSuccess: exitCode === 0 || (!exitCode && !isError),
+            timestamp,
+            raw
+        };
+    }
+
+    // Render a single log entry
+    function renderLogEntry(entry, isNew = false) {
+        if (!entry) return '';
+
+        // Handle array of entries
+        if (Array.isArray(entry)) {
+            return entry.map(e => renderLogEntry(e, isNew)).join('');
+        }
+
+        const typeInfo = LOG_TYPES[entry.type] || { icon: '•', class: '' };
+        const newClass = isNew ? ' new-line' : '';
+        const timestamp = formatRelativeTime(entry.timestamp);
+        const timestampTitle = new Date(entry.timestamp).toLocaleString();
+
+        let contentHtml = '';
+
+        switch (entry.type) {
+            case 'system':
+                contentHtml = `<span class="log-content">${escapeHtml(entry.content)}</span>`;
+                break;
+
+            case 'init':
+                contentHtml = `<span class="log-content">Claude started in <code>${escapeHtml(entry.cwd)}</code></span>`;
+                break;
+
+            case 'thinking':
+                contentHtml = `<span class="log-content">${escapeHtml(entry.content)}</span>`;
+                break;
+
+            case 'tool':
+                contentHtml = renderToolEntry(entry);
+                break;
+
+            case 'output':
+                return renderOutputEntry(entry, isNew, timestamp, timestampTitle);
+
+            case 'success':
+                contentHtml = `<span class="log-content">${escapeHtml(entry.content)}</span>`;
+                break;
+
+            case 'error':
+                contentHtml = `<span class="log-content">${escapeHtml(entry.content)}</span>`;
+                break;
+
+            case 'warning':
+                contentHtml = `<span class="log-content">${escapeHtml(entry.content)}</span>`;
+                break;
+
+            case 'iteration':
+                // Iterations are handled separately
+                return '';
+
+            default:
+                contentHtml = `<span class="log-content">${escapeHtml(entry.content || '')}</span>`;
+        }
+
+        return `
+            <div class="log-entry ${typeInfo.class}${newClass}" data-type="${entry.type}" data-timestamp="${entry.timestamp}">
+                <span class="log-icon">${typeInfo.icon}</span>
+                ${contentHtml}
+                <span class="log-timestamp" title="${timestampTitle}">${timestamp}</span>
+            </div>
+        `;
+    }
+
+    // Render tool entry
+    function renderToolEntry(entry) {
+        let html = `<span class="log-content">`;
+        html += `<span class="tool-badge">${entry.toolName}</span>`;
+        const extra = entry.extraInfo || {};
+
+        if (entry.subtype === 'bash' && entry.command) {
+            // Bash command with description if available
+            html += `
+                <div class="command-block">
+                    <div class="command-header">
+                        <span class="command-prompt">$</span>
+                        <span class="command-text">${escapeHtml(entry.command)}</span>
+                    </div>
+                    ${entry.description ? `<div class="command-description">${escapeHtml(entry.description)}</div>` : ''}
+                </div>
+            `;
+        } else if (entry.subtype === 'write' && entry.filePath) {
+            // Write file operation
+            html += `<span class="file-path">${escapeHtml(entry.filePath)}</span>`;
+            if (extra.lineCount) {
+                html += `<span class="file-info">(${extra.lineCount} lines)</span>`;
+            }
+        } else if (entry.subtype === 'edit' && entry.filePath) {
+            // Edit file operation
+            html += `<span class="file-path">${escapeHtml(entry.filePath)}</span>`;
+            if (extra.linesRemoved !== undefined && extra.linesAdded !== undefined) {
+                const diff = extra.linesAdded - extra.linesRemoved;
+                const diffText = diff > 0 ? `+${diff}` : (diff < 0 ? `${diff}` : '±0');
+                html += `<span class="file-info edit-info">(${diffText} lines${extra.replaceAll ? ', all' : ''})</span>`;
+            }
+        } else if (entry.subtype === 'read' && entry.filePath) {
+            // Read file operation
+            html += `<span class="file-path">${escapeHtml(entry.filePath)}</span>`;
+            if (extra.offset || extra.limit) {
+                const rangeInfo = [];
+                if (extra.offset) rangeInfo.push(`offset: ${extra.offset}`);
+                if (extra.limit) rangeInfo.push(`limit: ${extra.limit}`);
+                html += `<span class="file-info">(${rangeInfo.join(', ')})</span>`;
+            }
+        } else if (entry.subtype === 'todo' && extra.todoCount !== undefined) {
+            // Todo write with status
+            html += `<span class="tool-info">${extra.todoCount} tasks (${extra.completed || 0} done, ${extra.inProgress || 0} active)</span>`;
+        } else if (entry.subtype === 'search') {
+            // Search operation (Glob/Grep)
+            html += `<span class="search-pattern">"${escapeHtml(entry.toolInfo)}"</span>`;
+            if (extra.searchPath) {
+                html += `<span class="file-info">in ${escapeHtml(extra.searchPath)}</span>`;
+            }
+            if (extra.fileType) {
+                html += `<span class="file-info">(${extra.fileType} files)</span>`;
+            }
+        } else if (entry.subtype === 'web') {
+            // Web operations
+            html += `<span class="tool-info web-url">${escapeHtml(entry.toolInfo)}</span>`;
+        } else if (entry.subtype === 'task') {
+            // Task agent
+            html += `<span class="tool-info">${escapeHtml(entry.toolInfo)}</span>`;
+            if (extra.agentType) {
+                html += `<span class="agent-badge">${escapeHtml(extra.agentType)}</span>`;
+            }
+        } else if (entry.subtype === 'lsp') {
+            // LSP operation
+            html += `<span class="tool-info">${escapeHtml(entry.toolInfo)}</span>`;
+            if (extra.lspFile) {
+                html += `<span class="file-path">${escapeHtml(extra.lspFile)}</span>`;
+            }
+        } else if (entry.filePath) {
+            html += `<span class="file-path">${escapeHtml(entry.filePath)}</span>`;
+        } else if (entry.toolInfo) {
+            html += `<span class="tool-info">${escapeHtml(entry.toolInfo)}</span>`;
+        }
+
+        html += `</span>`;
+        return html;
+    }
+
+    // Render output entry with collapsible content
+    function renderOutputEntry(entry, isNew, timestamp, timestampTitle) {
+        const typeInfo = LOG_TYPES.output;
+        const newClass = isNew ? ' new-line' : '';
+        const lines = entry.content.split('\n');
+        const lineCount = lines.length;
+        const isLong = lineCount > 10;
+        const previewContent = isLong ? lines.slice(0, 10).join('\n') : entry.content;
+        const exitCodeHtml = entry.exitCode !== null
+            ? `<span class="exit-code ${entry.exitCode === 0 ? 'success' : 'error'}">${entry.exitCode === 0 ? '✓' : '✗'} Exit: ${entry.exitCode}</span>`
+            : '';
+
+        return `
+            <div class="log-entry log-type-output${newClass}" data-type="output" data-timestamp="${entry.timestamp}">
+                <span class="log-icon">${typeInfo.icon}</span>
+                <span class="log-content">
+                    <div class="output-block">
+                        <div class="output-header">
+                            <span class="output-line-count">${lineCount} line${lineCount !== 1 ? 's' : ''}</span>
+                            ${isLong ? '<button class="show-more-btn" onclick="toggleOutputExpand(this)">Show more ▼</button>' : ''}
+                        </div>
+                        <div class="output-content${isLong ? ' collapsed' : ''}" data-full="${escapeHtml(entry.content)}">${escapeHtml(isLong ? previewContent : entry.content)}</div>
+                        ${exitCodeHtml}
+                    </div>
+                </span>
+                <span class="log-timestamp" title="${timestampTitle}">${timestamp}</span>
+            </div>
+        `;
+    }
+
+    // Format relative time
+    function formatRelativeTime(timestamp) {
+        const now = Date.now();
+        const diff = Math.floor((now - timestamp) / 1000);
+
+        if (diff < 5) return 'now';
+        if (diff < 60) return `${diff}s ago`;
+        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+        if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+        return `${Math.floor(diff / 86400)}d ago`;
+    }
+
+    // Create or update iteration block
+    function ensureIteration(iterNum, summary = '') {
+        let iteration = logState.iterations.find(i => i.number === iterNum);
+
+        if (!iteration) {
+            iteration = {
+                number: iterNum,
+                summary: summary,
+                status: 'running',
+                startTime: Date.now(),
+                endTime: null,
+                entries: []
+            };
+            logState.iterations.push(iteration);
+            logState.currentIteration = iterNum;
+
+            // Collapse previous iterations
+            logState.iterations.forEach(i => {
+                if (i.number < iterNum) {
+                    i.collapsed = true;
+                }
+            });
+        }
+
+        return iteration;
+    }
+
+    // Generate a summary for an iteration based on its entries
+    function generateIterationSummary(iteration) {
+        if (iteration.summary) return iteration.summary;
+
+        const entries = iteration.entries;
+        if (!entries || entries.length === 0) return '';
+
+        // Find the first thinking entry for context
+        const thinkingEntry = entries.find(e => e.type === 'thinking');
+        if (thinkingEntry && thinkingEntry.content) {
+            // Extract first sentence or truncate
+            const text = thinkingEntry.content;
+            const firstSentence = text.split(/[.!?\n]/)[0];
+            if (firstSentence && firstSentence.length > 5) {
+                return firstSentence.length > 60 ? firstSentence.substring(0, 57) + '...' : firstSentence;
+            }
+        }
+
+        // Fallback: summarize based on tool usage
+        const toolEntries = entries.filter(e => e.type === 'tool');
+        if (toolEntries.length > 0) {
+            const toolCounts = {};
+            toolEntries.forEach(e => {
+                const name = e.toolName || 'Tool';
+                toolCounts[name] = (toolCounts[name] || 0) + 1;
+            });
+
+            const toolSummary = Object.entries(toolCounts)
+                .map(([name, count]) => count > 1 ? `${name} (${count}x)` : name)
+                .slice(0, 3)
+                .join(', ');
+
+            return toolSummary;
+        }
+
+        return '';
+    }
+
+    // Render all iterations
+    function renderIterations() {
+        const $log = $('#logOutput');
+        let html = '';
+
+        if (logState.iterations.length === 0) {
+            // No iterations yet, render entries directly
+            const entriesHtml = logState.entries.map(e => renderLogEntry(e)).join('');
+            $log.html(entriesHtml || '<span class="waiting">Claude is starting... waiting for output...</span>');
+            return;
+        }
+
+        // Get total iteration count (for display like "Iteration 3/10")
+        const totalIterations = logState.iterations.length;
+
+        // Render each iteration as a collapsible block
+        for (const iteration of logState.iterations) {
+            const isCollapsed = iteration.collapsed && iteration.status !== 'running';
+            const duration = formatDuration(iteration.startTime, iteration.endTime || Date.now());
+            const statusClass = iteration.status === 'running' ? 'running' :
+                               (iteration.status === 'error' ? 'error' : 'completed');
+            const statusIcon = iteration.status === 'running' ? '● Running' :
+                              (iteration.status === 'error' ? '✗ Error' : '✓');
+
+            // Generate summary if not provided
+            const summary = generateIterationSummary(iteration);
+
+            // Count stats for this iteration
+            const toolCount = iteration.entries.filter(e => e.type === 'tool').length;
+            const errorCount = iteration.entries.filter(e => e.type === 'error').length;
+
+            html += `
+                <div class="iteration-block${isCollapsed ? ' collapsed' : ''}" data-iteration="${iteration.number}">
+                    <div class="iteration-header" onclick="toggleIteration(${iteration.number})">
+                        <span class="iteration-toggle">▼</span>
+                        <span class="iteration-title">Iteration ${iteration.number}</span>
+                        <span class="iteration-summary">${escapeHtml(summary)}</span>
+                        <span class="iteration-stats">
+                            ${toolCount > 0 ? `<span class="stat-tool" title="${toolCount} tool calls">🔧${toolCount}</span>` : ''}
+                            ${errorCount > 0 ? `<span class="stat-error" title="${errorCount} errors">❌${errorCount}</span>` : ''}
+                        </span>
+                        <span class="iteration-status ${statusClass}">${statusIcon}</span>
+                        <span class="iteration-duration">${duration}</span>
+                    </div>
+                    <div class="iteration-content">
+                        ${iteration.entries.map(e => renderLogEntry(e)).join('')}
+                        ${iteration.status === 'running' ? '<div class="thinking-indicator"><span class="pulsing-dot"></span> Processing...</div>' : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        $log.html(html);
+    }
+
+    // Format duration
+    function formatDuration(start, end) {
+        const diff = Math.floor((end - start) / 1000);
+        if (diff < 60) return `${diff}s`;
+        const mins = Math.floor(diff / 60);
+        const secs = diff % 60;
+        return `${mins}m ${secs}s`;
+    }
+
+    // Append new log entry
     function appendLog(taskId, message) {
         if (currentTaskId !== taskId) return;
 
-        const $log = $('#logOutput');
-        const formatted = formatLogMessage(message);
+        const entry = parseLogEntry(message);
+        if (!entry) return;
 
-        if (formatted) {
-            const $newLine = $('<div class="log-entry new-line"></div>').html(formatted);
-            $log.append($newLine);
+        // Handle array of entries
+        const entries = Array.isArray(entry) ? entry : [entry];
 
-            setTimeout(function() {
-                $newLine.removeClass('new-line');
-            }, 1000);
-
-            if (autoScroll) {
-                scrollToBottom($log);
+        for (const e of entries) {
+            // Handle iteration markers
+            if (e.type === 'iteration') {
+                ensureIteration(e.iterationNumber, e.content);
+                continue;
             }
+
+            // Add entry to current iteration or global list
+            if (logState.currentIteration !== null) {
+                const iteration = logState.iterations.find(i => i.number === logState.currentIteration);
+                if (iteration) {
+                    iteration.entries.push(e);
+
+                    // Update iteration status on success/error
+                    if (e.type === 'success') {
+                        iteration.status = 'completed';
+                        iteration.endTime = Date.now();
+                    } else if (e.type === 'error') {
+                        iteration.status = 'error';
+                        iteration.endTime = Date.now();
+                    }
+                }
+            } else {
+                logState.entries.push(e);
+            }
+        }
+
+        // Re-render and scroll
+        renderIterations();
+        applyLogFilters();
+
+        if (autoScroll) {
+            scrollToBottom($('#logOutput'));
         }
     }
 
@@ -1135,99 +1794,166 @@ git rebase --continue
         });
     }
 
-    function formatLogMessage(message) {
-        if (message.startsWith('[GRINDER]')) {
-            return `<span class="log-system">${escapeHtml(message)}</span>`;
-        }
+    // Apply log filters and search
+    function applyLogFilters() {
+        const filter = logState.filter;
+        const searchQuery = logState.searchQuery.toLowerCase();
 
-        try {
-            const data = JSON.parse(message.trim());
-            return formatJsonLog(data);
-        } catch (e) {
-            const trimmed = message.trim();
-            if (trimmed) {
-                return `<span class="log-text">${escapeHtml(trimmed)}</span>`;
+        $('.log-entry').each(function() {
+            const $entry = $(this);
+            const type = $entry.data('type');
+            let visible = true;
+
+            // Apply filter
+            switch (filter) {
+                case 'errors':
+                    visible = type === 'error' || type === 'warning';
+                    break;
+                case 'tools':
+                    visible = type === 'tool' || type === 'output';
+                    break;
+                case 'hide-thinking':
+                    visible = type !== 'thinking';
+                    break;
+                default:
+                    visible = true;
             }
-            return null;
+
+            // Apply search
+            if (visible && searchQuery) {
+                const content = $entry.text().toLowerCase();
+                visible = content.includes(searchQuery);
+                $entry.toggleClass('search-match', visible);
+            } else {
+                $entry.removeClass('search-match');
+            }
+
+            $entry.toggleClass('filtered-out', !visible);
+        });
+    }
+
+    // Timestamp update interval
+    let timestampUpdateInterval = null;
+
+    // Update all visible timestamps
+    function updateTimestamps() {
+        $('.log-entry .log-timestamp').each(function() {
+            const $ts = $(this);
+            const timestamp = $ts.closest('.log-entry').data('timestamp');
+            if (timestamp) {
+                $ts.text(formatRelativeTime(timestamp));
+            }
+        });
+
+        // Also update iteration durations
+        $('.iteration-block').each(function() {
+            const $block = $(this);
+            const iterNum = $block.data('iteration');
+            const iteration = logState.iterations.find(i => i.number === iterNum);
+            if (iteration) {
+                const duration = formatDuration(iteration.startTime, iteration.endTime || Date.now());
+                $block.find('.iteration-duration').text(duration);
+            }
+        });
+    }
+
+    // Start timestamp update interval
+    function startTimestampUpdates() {
+        stopTimestampUpdates();
+        timestampUpdateInterval = setInterval(updateTimestamps, 5000); // Update every 5 seconds
+    }
+
+    // Stop timestamp update interval
+    function stopTimestampUpdates() {
+        if (timestampUpdateInterval) {
+            clearInterval(timestampUpdateInterval);
+            timestampUpdateInterval = null;
         }
     }
 
-    function formatJsonLog(data) {
-        switch (data.type) {
-            case 'system':
-                if (data.subtype === 'init') {
-                    return `<div class="log-init">
-                        <span class="log-icon">&#128640;</span>
-                        <span>Claude gestartet in <code>${data.cwd}</code></span>
-                    </div>`;
+    // Setup filter buttons
+    function setupLogFilters() {
+        $('.filter-btn').off('click').on('click', function() {
+            const filter = $(this).data('filter');
+
+            // Toggle active state
+            if (filter === 'hide-thinking') {
+                // Toggle behavior for hide-thinking
+                $(this).toggleClass('active');
+                logState.filter = $(this).hasClass('active') ? 'hide-thinking' : 'all';
+                // Deactivate other filters when hide-thinking is active
+                if (logState.filter === 'hide-thinking') {
+                    $('.filter-btn').not(this).removeClass('active');
+                } else {
+                    $('.filter-btn[data-filter="all"]').addClass('active');
                 }
-                return null;
+            } else {
+                // Single select for other filters
+                $('.filter-btn').removeClass('active');
+                $(this).addClass('active');
+                logState.filter = filter;
+            }
 
-            case 'assistant':
-                const msg = data.message;
-                if (!msg || !msg.content) return null;
+            applyLogFilters();
+        });
 
-                let html = '';
-                for (const block of msg.content) {
-                    if (block.type === 'text' && block.text) {
-                        html += `<div class="log-assistant">
-                            <span class="log-icon">&#129302;</span>
-                            <span>${escapeHtml(block.text)}</span>
-                        </div>`;
+        // Setup search
+        let searchTimeout;
+        $('#logSearch').off('input').on('input', function() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(function() {
+                logState.searchQuery = $('#logSearch').val();
+                applyLogFilters();
+            }, 200);
+        });
+    }
+
+    // Parse existing logs when loading a task
+    function parseExistingLogs(logsText) {
+        resetLogState();
+
+        if (!logsText) return;
+
+        // Split by lines and parse each
+        const lines = logsText.split('\n');
+        for (const line of lines) {
+            if (!line.trim()) continue;
+
+            const entry = parseLogEntry(line);
+            if (!entry) continue;
+
+            // Handle array of entries
+            const entries = Array.isArray(entry) ? entry : [entry];
+
+            for (const e of entries) {
+                if (e.type === 'iteration') {
+                    ensureIteration(e.iterationNumber, e.content);
+                } else if (logState.currentIteration !== null) {
+                    const iteration = logState.iterations.find(i => i.number === logState.currentIteration);
+                    if (iteration) {
+                        iteration.entries.push(e);
                     }
-                    if (block.type === 'tool_use') {
-                        const toolName = block.name;
-                        let toolInfo = '';
-
-                        if (toolName === 'Write' || toolName === 'Edit') {
-                            toolInfo = block.input?.file_path || '';
-                        } else if (toolName === 'Bash') {
-                            toolInfo = block.input?.description || block.input?.command?.substring(0, 50) || '';
-                        } else if (toolName === 'Read') {
-                            toolInfo = block.input?.file_path || '';
-                        } else if (toolName === 'TodoWrite') {
-                            toolInfo = 'Updating task list...';
-                        }
-
-                        html += `<div class="log-tool">
-                            <span class="log-icon">&#128295;</span>
-                            <span class="tool-name">${toolName}</span>
-                            <span class="tool-info">${escapeHtml(toolInfo)}</span>
-                        </div>`;
-                    }
+                } else {
+                    logState.entries.push(e);
                 }
-                return html || null;
-
-            case 'user':
-                const content = data.message?.content;
-                if (!content || !Array.isArray(content)) return null;
-
-                for (const block of content) {
-                    if (block.type === 'tool_result') {
-                        const result = block.content || '';
-                        const isError = block.is_error;
-                        const preview = result.length > 200 ? result.substring(0, 200) + '...' : result;
-
-                        if (isError) {
-                            return `<div class="log-error">
-                                <span class="log-icon">&#10060;</span>
-                                <span>${escapeHtml(preview)}</span>
-                            </div>`;
-                        }
-
-                        if (result.includes('successfully') || result.includes('Error') || result.length < 100) {
-                            return `<div class="log-result">
-                                <span class="log-icon">&#10003;</span>
-                                <span>${escapeHtml(preview)}</span>
-                            </div>`;
-                        }
-                    }
-                }
-                return null;
-
-            default:
-                return null;
+            }
         }
+
+        renderIterations();
+    }
+
+    // Legacy compatibility - formatLogMessage for backwards compatibility
+    function formatLogMessage(message) {
+        const entry = parseLogEntry(message);
+        if (!entry) return null;
+        return renderLogEntry(entry);
+    }
+
+    // Legacy compatibility - formatJsonLog
+    function formatJsonLog(data) {
+        const entry = parseJsonLogEntry(data, Date.now(), '');
+        if (!entry) return null;
+        return renderLogEntry(entry);
     }
 
     function updateStatusBadge(taskId, status, iteration) {
@@ -2534,9 +3260,11 @@ git rebase --continue
             $('#logSection').removeClass('hidden');
 
             if (task.status === 'progress' && !task.logs) {
+                resetLogState();
                 $('#logOutput').html('<span class="waiting">Claude is starting... waiting for output...</span>');
             } else {
-                $('#logOutput').text(task.logs || '');
+                // Parse existing logs with the new structured system
+                parseExistingLogs(task.logs || '');
             }
 
             const badgeText = task.current_iteration > 0
@@ -2547,9 +3275,17 @@ git rebase --continue
             // Only initialize scroll detection once when log section first becomes visible
             if (wasHidden) {
                 setupLogScrollDetection();
+                setupLogFilters();
+                startTimestampUpdates(); // Start updating timestamps
                 // Reset auto-scroll state when first opening
                 autoScroll = true;
                 $('#autoScroll').prop('checked', true);
+                // Reset filter state
+                logState.filter = 'all';
+                logState.searchQuery = '';
+                $('.filter-btn').removeClass('active');
+                $('.filter-btn[data-filter="all"]').addClass('active');
+                $('#logSearch').val('');
             }
 
             if (autoScroll) {
@@ -2572,6 +3308,7 @@ git rebase --continue
     function closeModal() {
         $('#taskModal').removeClass('active');
         currentTaskId = null;
+        stopTimestampUpdates(); // Stop updating timestamps when modal closes
     }
 
     function submitTaskForm() {
@@ -3507,3 +4244,36 @@ git rebase --continue
         });
     }
 });
+
+// ============================================================================
+// GLOBAL FUNCTIONS FOR LOG INTERACTION
+// ============================================================================
+
+// Toggle iteration collapse state
+function toggleIteration(iterNum) {
+    const $block = $(`.iteration-block[data-iteration="${iterNum}"]`);
+    $block.toggleClass('collapsed');
+}
+
+// Toggle output expand/collapse
+function toggleOutputExpand(btn) {
+    const $btn = $(btn);
+    const $outputContent = $btn.closest('.output-block').find('.output-content');
+    const isCollapsed = $outputContent.hasClass('collapsed');
+
+    if (isCollapsed) {
+        // Expand - show full content
+        const fullContent = $outputContent.data('full');
+        $outputContent.text(fullContent);
+        $outputContent.removeClass('collapsed');
+        $btn.text('Show less ▲');
+    } else {
+        // Collapse - show preview
+        const fullContent = $outputContent.data('full');
+        const lines = fullContent.split('\n');
+        const preview = lines.slice(0, 10).join('\n');
+        $outputContent.text(preview);
+        $outputContent.addClass('collapsed');
+        $btn.text('Show more ▼');
+    }
+}

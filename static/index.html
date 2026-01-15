@@ -308,12 +308,23 @@
                     <div class="log-header">
                         <h3>Log</h3>
                         <span id="iterationBadge" class="badge">Iteration 0</span>
-                        <label class="auto-scroll-label">
-                            <input type="checkbox" id="autoScroll" checked>
-                            Auto-Scroll
-                        </label>
+                        <div class="log-controls">
+                            <input type="text" id="logSearch" class="log-search" placeholder="Search logs...">
+                            <div class="log-filters">
+                                <button class="filter-btn active" data-filter="all" title="Show all">All</button>
+                                <button class="filter-btn" data-filter="errors" title="Errors only">❌</button>
+                                <button class="filter-btn" data-filter="tools" title="Tools only">🔧</button>
+                                <button class="filter-btn" data-filter="hide-thinking" title="Hide thinking">💭</button>
+                            </div>
+                            <label class="auto-scroll-label">
+                                <input type="checkbox" id="autoScroll" checked>
+                                Auto-Scroll
+                            </label>
+                        </div>
                     </div>
-                    <pre id="logOutput" class="log-output"></pre>
+                    <div id="logOutput" class="log-output">
+                        <!-- Iterations will be rendered here -->
+                    </div>
                 </div>
 
                 <!-- Error Display -->
