@@ -613,6 +613,18 @@ func (h *Handler) HandleProject(w http.ResponseWriter, r *http.Request) {
 		h.getProjectBranches(w, r)
 		return
 	}
+	if strings.HasSuffix(path, "/branch-status") {
+		h.getProjectBranchStatus(w, r)
+		return
+	}
+	if strings.HasSuffix(path, "/checkout") {
+		h.handleProjectCheckout(w, r)
+		return
+	}
+	if strings.HasSuffix(path, "/pull") {
+		h.handleProjectPull(w, r)
+		return
+	}
 
 	id := extractProjectID(path)
 	if id == "" {
@@ -728,6 +740,129 @@ func (h *Handler) getProjectBranches(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"branches": branches,
+	})
+}
+
+// getProjectBranchStatus checks if branch is behind remote
+func (h *Handler) getProjectBranchStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	id := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(id)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	branch := r.URL.Query().Get("branch")
+	if branch == "" {
+		branch, _ = GetCurrentBranch(project.Path)
+	}
+
+	// Fetch from remote
+	fetchCmd := exec.Command("git", "fetch", "origin")
+	fetchCmd.Dir = project.Path
+	fetchCmd.Run()
+
+	// Count commits behind
+	behindCmd := exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..origin/%s", branch, branch))
+	behindCmd.Dir = project.Path
+	output, _ := behindCmd.Output()
+
+	behind := 0
+	fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &behind)
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"branch": branch,
+		"behind": behind,
+	})
+}
+
+// handleProjectCheckout switches to a branch
+func (h *Handler) handleProjectCheckout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	id := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(id)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	var req struct {
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Branch == "" {
+		h.writeError(w, http.StatusBadRequest, "Branch name required")
+		return
+	}
+
+	// Check uncommitted changes
+	if hasChanges, _ := HasUncommittedChanges(project.Path); hasChanges {
+		h.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "Uncommitted changes. Please commit or stash first.",
+		})
+		return
+	}
+
+	if err := CheckoutBranch(project.Path, req.Branch); err != nil {
+		h.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"branch":  req.Branch,
+	})
+}
+
+// handleProjectPull pulls latest changes
+func (h *Handler) handleProjectPull(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	id := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(id)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	// Check uncommitted changes
+	if hasChanges, _ := HasUncommittedChanges(project.Path); hasChanges {
+		h.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "Uncommitted changes. Please commit or stash first.",
+		})
+		return
+	}
+
+	pullCmd := exec.Command("git", "pull", "--ff-only")
+	pullCmd.Dir = project.Path
+	output, err := pullCmd.CombinedOutput()
+
+	if err != nil {
+		h.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   string(output),
+		})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
 	})
 }
 

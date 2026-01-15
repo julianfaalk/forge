@@ -191,6 +191,164 @@ body {
     text-overflow: ellipsis;
 }
 
+/* Branch Selector */
+.branch-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 0.5rem;
+    position: relative;
+}
+
+.branch-selector.hidden {
+    display: none;
+}
+
+.branch-selector-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.5rem;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    max-width: 180px;
+}
+
+.branch-selector-btn:hover {
+    background-color: var(--bg-tertiary);
+    border-color: var(--text-secondary);
+}
+
+.branch-icon-header {
+    width: 14px;
+    height: 14px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.branch-chevron {
+    width: 12px;
+    height: 12px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+}
+
+.branch-selector.open .branch-chevron {
+    transform: rotate(180deg);
+}
+
+.current-branch-name {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+}
+
+.branch-pull-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.3rem;
+    background-color: var(--accent);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    color: white;
+}
+
+.branch-pull-btn:hover {
+    background-color: var(--accent-hover);
+}
+
+.branch-pull-btn.hidden {
+    display: none;
+}
+
+.branch-pull-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.branch-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    min-width: 220px;
+    max-width: 300px;
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 1000;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.branch-dropdown.hidden {
+    display: none;
+}
+
+.branch-dropdown-list {
+    padding: 0.25rem;
+}
+
+.branch-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    font-size: 0.8rem;
+    font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+    color: var(--text-primary);
+}
+
+.branch-dropdown-item:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.branch-dropdown-item.active {
+    background-color: var(--accent);
+    color: white;
+}
+
+.branch-dropdown-item .branch-item-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.branch-dropdown-item .branch-item-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.branch-dropdown-item .branch-item-badge {
+    font-size: 0.65rem;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.branch-dropdown-item.active .branch-item-badge {
+    background-color: rgba(255,255,255,0.2);
+    color: white;
+}
+
 /* Sidebar Overlay */
 .sidebar-overlay {
     position: fixed;

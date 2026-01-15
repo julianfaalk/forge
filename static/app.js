@@ -236,6 +236,163 @@ $(document).ready(function() {
         }
 
         $('#selectedProjectName').text(displayName).attr('title', displayTitle);
+        updateBranchSelector(projectId);
+    }
+
+    /**
+     * Update branch selector in header
+     */
+    function updateBranchSelector(projectId) {
+        const $selector = $('#branchSelector');
+        const $branchName = $('#currentBranchName');
+        const $pullBtn = $('#branchPullBtn');
+
+        if (!projectId) {
+            $selector.addClass('hidden');
+            return;
+        }
+
+        $.get('/api/projects/' + projectId + '/git-info')
+            .done(function(data) {
+                if (data.current_branch) {
+                    $branchName.text(data.current_branch).attr('title', data.current_branch);
+                    $selector.removeClass('hidden');
+                    checkBranchBehind(projectId, data.current_branch);
+                } else {
+                    $selector.addClass('hidden');
+                }
+            })
+            .fail(function() {
+                $selector.addClass('hidden');
+            });
+    }
+
+    /**
+     * Check if branch is behind remote and show pull button
+     */
+    function checkBranchBehind(projectId, branch) {
+        const $pullBtn = $('#branchPullBtn');
+
+        $.get('/api/projects/' + projectId + '/branch-status?branch=' + encodeURIComponent(branch))
+            .done(function(data) {
+                if (data.behind > 0) {
+                    $pullBtn.removeClass('hidden').attr('title', 'Pull ' + data.behind + ' commit(s)');
+                } else {
+                    $pullBtn.addClass('hidden');
+                }
+            })
+            .fail(function() {
+                $pullBtn.addClass('hidden');
+            });
+    }
+
+    /**
+     * Load branches into dropdown
+     */
+    function loadBranchDropdown(projectId) {
+        const $list = $('#branchDropdownList');
+        $list.html('<div class="branch-dropdown-item">Loading...</div>');
+
+        $.when(
+            $.get('/api/projects/' + projectId + '/branches'),
+            $.get('/api/projects/' + projectId + '/git-info')
+        ).done(function(branchRes, gitRes) {
+            const branches = branchRes[0].branches || [];
+            const currentBranch = gitRes[0].current_branch || '';
+
+            $list.empty();
+
+            // Only local branches, sorted with main/master first
+            const localBranches = branches.filter(b => !b.startsWith('origin/'));
+            localBranches.sort((a, b) => {
+                if (a === 'main' || a === 'master') return -1;
+                if (b === 'main' || b === 'master') return 1;
+                return a.localeCompare(b);
+            });
+
+            localBranches.forEach(function(branch) {
+                const isActive = branch === currentBranch;
+                $list.append(`
+                    <div class="branch-dropdown-item ${isActive ? 'active' : ''}" data-branch="${escapeHtml(branch)}">
+                        <svg class="branch-item-icon" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>
+                        </svg>
+                        <span class="branch-item-name">${escapeHtml(branch)}</span>
+                        ${isActive ? '<span class="branch-item-badge">current</span>' : ''}
+                    </div>
+                `);
+            });
+
+            if (localBranches.length === 0) {
+                $list.html('<div class="branch-dropdown-item">No branches</div>');
+            }
+        }).fail(function() {
+            $list.html('<div class="branch-dropdown-item">Error loading</div>');
+        });
+    }
+
+    /**
+     * Switch to a branch
+     */
+    function switchToBranch(projectId, branch) {
+        showToast('Switching to ' + branch + '...', 'info');
+
+        $.post('/api/projects/' + projectId + '/checkout', JSON.stringify({ branch: branch }), null, 'json')
+            .done(function(data) {
+                if (data.success) {
+                    showToast('Switched to ' + branch, 'success');
+                    closeBranchDropdown();
+                    updateBranchSelector(projectId);
+                } else {
+                    showToast(data.error || 'Failed to switch', 'error');
+                }
+            })
+            .fail(function(xhr) {
+                showToast(xhr.responseJSON?.error || 'Failed to switch', 'error');
+            });
+    }
+
+    /**
+     * Pull latest changes
+     */
+    function pullBranch(projectId) {
+        const $btn = $('#branchPullBtn');
+        $btn.prop('disabled', true);
+        showToast('Pulling...', 'info');
+
+        $.post('/api/projects/' + projectId + '/pull')
+            .done(function(data) {
+                if (data.success) {
+                    showToast('Pulled successfully', 'success');
+                    $btn.addClass('hidden');
+                } else {
+                    showToast(data.error || 'Failed to pull', 'error');
+                }
+            })
+            .fail(function(xhr) {
+                showToast(xhr.responseJSON?.error || 'Failed to pull', 'error');
+            })
+            .always(function() {
+                $btn.prop('disabled', false);
+            });
+    }
+
+    function toggleBranchDropdown() {
+        const $selector = $('#branchSelector');
+        const $dropdown = $('#branchDropdown');
+
+        if ($dropdown.hasClass('hidden')) {
+            $selector.addClass('open');
+            $dropdown.removeClass('hidden');
+            if (selectedProjectFilter) loadBranchDropdown(selectedProjectFilter);
+        } else {
+            closeBranchDropdown();
+        }
+    }
+
+    function closeBranchDropdown() {
+        $('#branchSelector').removeClass('open');
+        $('#branchDropdown').addClass('hidden');
     }
 
     /**
@@ -1741,6 +1898,29 @@ git rebase --continue
                 $('.task-dropdown-menu.open').removeClass('open');
                 $('.task-dropdown-toggle.active').removeClass('active');
             }
+            // Close branch dropdown
+            if (!$(e.target).closest('.branch-selector').length) {
+                closeBranchDropdown();
+            }
+        });
+
+        // Branch selector events
+        $('#branchSelectorBtn').on('click', function(e) {
+            e.stopPropagation();
+            toggleBranchDropdown();
+        });
+
+        $(document).on('click', '.branch-dropdown-item', function(e) {
+            e.stopPropagation();
+            const branch = $(this).data('branch');
+            if (branch && selectedProjectFilter && !$(this).hasClass('active')) {
+                switchToBranch(selectedProjectFilter, branch);
+            }
+        });
+
+        $('#branchPullBtn').on('click', function(e) {
+            e.stopPropagation();
+            if (selectedProjectFilter) pullBranch(selectedProjectFilter);
         });
 
         // Project click in sidebar - select project and close sidebar
