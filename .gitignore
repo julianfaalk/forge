@@ -1,0 +1,81 @@
+# ===========================================
+# .gitignore - Sensible Daten & Build-Artefakte
+# ===========================================
+
+# -------------------------------------------
+# Datenbanken
+# -------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.db-journal
+grinder.db
+
+# -------------------------------------------
+# Environment & Secrets
+# -------------------------------------------
+.env
+.env.*
+*.env
+.secrets
+credentials.json
+*_credentials.json
+*.pem
+*.key
+config.local.*
+
+# -------------------------------------------
+# Tokens & Auth
+# -------------------------------------------
+.github_token
+.token
+oauth_tokens.json
+*.token
+
+# -------------------------------------------
+# OS & IDE
+# -------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# -------------------------------------------
+# Build & Dependencies
+# -------------------------------------------
+node_modules/
+vendor/
+bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+
+# Go compiled binary (project name)
+grinder
+
+# -------------------------------------------
+# Logs & Temp
+# -------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+cache/
+
+# -------------------------------------------
+# Go spezifisch
+# -------------------------------------------
+# go.sum (optional - manche Teams committen es)
+coverage.out
+*.prof
+*.pprof
+__debug_bin*
