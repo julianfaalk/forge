@@ -488,6 +488,45 @@ body {
     color: var(--text-secondary);
 }
 
+.task-type-actions {
+    display: flex;
+    gap: 0.25rem;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    margin-left: auto;
+}
+
+.task-type-item:hover .task-type-actions {
+    opacity: 1;
+}
+
+.task-type-action-btn {
+    background: transparent;
+    border: none;
+    padding: 0.25rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.task-type-action-btn:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.task-type-delete-btn:hover {
+    color: var(--danger-color);
+    background-color: rgba(248, 81, 73, 0.1);
+}
+
+.task-type-action-btn.hidden {
+    display: none;
+}
+
 /* Board */
 .board {
     display: flex;

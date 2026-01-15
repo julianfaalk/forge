@@ -1162,11 +1162,24 @@ git rebase --continue
 
         taskTypes.forEach(function(type) {
             const count = tasks.filter(t => t.task_type_id === type.id).length;
+            const isSystem = type.is_system;
             $list.append(`
-                <div class="task-type-item" data-type-id="${type.id}">
+                <div class="task-type-item" data-type-id="${type.id}" data-is-system="${isSystem}">
                     <span class="task-type-color" style="background-color: ${type.color}"></span>
                     <span class="task-type-name">${escapeHtml(type.name)}</span>
                     <span class="task-type-count">${count}</span>
+                    <span class="task-type-actions">
+                        <button class="task-type-action-btn task-type-edit-btn" title="Bearbeiten">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61zm1.414 1.06a.25.25 0 00-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 000-.354l-1.086-1.086zM11.189 6.25L9.75 4.81l-6.286 6.287a.25.25 0 00-.064.108l-.558 1.953 1.953-.558a.249.249 0 00.108-.064l6.286-6.286z"/>
+                            </svg>
+                        </button>
+                        <button class="task-type-action-btn task-type-delete-btn ${isSystem ? 'hidden' : ''}" title="Loeschen">
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                                <path d="M6.5 1.75a.25.25 0 01.25-.25h2.5a.25.25 0 01.25.25V3h-3V1.75zm4.5 0V3h2.25a.75.75 0 010 1.5H2.75a.75.75 0 010-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75zM4.496 6.675a.75.75 0 10-1.492.15l.66 6.6A1.75 1.75 0 005.405 15h5.19c.9 0 1.652-.681 1.741-1.576l.66-6.6a.75.75 0 00-1.492-.149l-.66 6.6a.25.25 0 01-.249.225h-5.19a.25.25 0 01-.249-.225l-.66-6.6z"/>
+                            </svg>
+                        </button>
+                    </span>
                 </div>
             `);
         });
@@ -1347,7 +1360,26 @@ git rebase --continue
             toggleFolder(folderPath);
         });
 
-        // Task type click in sidebar
+        // Task type edit button click
+        $(document).on('click', '.task-type-edit-btn', function(e) {
+            e.stopPropagation();
+            const typeId = $(this).closest('.task-type-item').data('type-id');
+            const type = taskTypes.find(t => t.id === typeId);
+            if (type) openEditTaskTypeModal(type);
+        });
+
+        // Task type delete button click
+        $(document).on('click', '.task-type-delete-btn', function(e) {
+            e.stopPropagation();
+            const $item = $(this).closest('.task-type-item');
+            const typeId = $item.data('type-id');
+            const type = taskTypes.find(t => t.id === typeId);
+            if (type && !type.is_system) {
+                showDeleteTaskTypeConfirmation(type);
+            }
+        });
+
+        // Task type double-click in sidebar (legacy support)
         $(document).on('dblclick', '.task-type-item', function(e) {
             const typeId = $(this).data('type-id');
             const type = taskTypes.find(t => t.id === typeId);
@@ -2109,6 +2141,43 @@ git rebase --continue
         }
 
         saveTaskType(typeData);
+    }
+
+    function showDeleteTaskTypeConfirmation(type) {
+        const taskCount = tasks.filter(t => t.task_type_id === type.id).length;
+        let message = `Task-Typ "${type.name}" wirklich loeschen?`;
+        if (taskCount > 0) {
+            message += `\n\n${taskCount} Task(s) mit diesem Typ werden typlos.`;
+        }
+
+        if (confirm(message)) {
+            deleteTaskTypeWithReload(type.id);
+        }
+    }
+
+    function deleteTaskTypeWithReload(typeId) {
+        $.ajax({
+            url: '/api/task-types/' + typeId,
+            method: 'DELETE'
+        })
+        .done(function() {
+            taskTypes = taskTypes.filter(t => t.id !== typeId);
+            // Update tasks that had this type to have no type
+            tasks.forEach(function(task) {
+                if (task.task_type_id === typeId) {
+                    task.task_type_id = '';
+                    task.task_type = null;
+                }
+            });
+            renderTaskTypeList();
+            populateTaskTypeSelect();
+            renderAllTasks();
+            showToast('Task-Typ geloescht', 'success');
+        })
+        .fail(function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Fehler beim Loeschen';
+            showToast(msg, 'error');
+        });
     }
 
     // Utility Functions
