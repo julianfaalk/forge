@@ -101,10 +101,17 @@ func main() {
 			handler.HandleMergeTask(w, r) // Branch in main mergen
 		} else if strings.HasSuffix(path, "/resolve-conflict") {
 			handler.HandleResolveConflict(w, r) // RALPH löst Merge-Konflikt
+		} else if strings.HasSuffix(path, "/attachments") {
+			handler.HandleTaskAttachments(w, r) // GET/POST Attachments
+		} else if strings.Contains(path, "/attachments/") {
+			handler.HandleTaskAttachment(w, r) // GET/DELETE einzelnes Attachment
 		} else {
 			handler.HandleTask(w, r) // Standard GET/PUT/DELETE
 		}
 	})
+
+	// Upload-Routen: Statische Dateien für hochgeladene Anhänge
+	mux.HandleFunc("/uploads/", handler.HandleServeUpload)
 
 	// Konfigurations-Route: Globale Einstellungen
 	mux.HandleFunc("/api/config", handler.HandleConfig)

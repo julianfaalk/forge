@@ -2113,6 +2113,18 @@ git rebase --continue
             );
         }
 
+        // Show attachment badge if task has attachments
+        if (task.attachments && task.attachments.length > 0) {
+            $card.find('.task-card-footer').append(`
+                <span class="attachment-badge" title="${task.attachments.length} attachment${task.attachments.length > 1 ? 's' : ''}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                    </svg>
+                    ${task.attachments.length}
+                </span>
+            `);
+        }
+
         // Show conflict section if task has a conflict PR open
         if (task.working_branch && task.conflict_pr_url && task.conflict_pr_number) {
             $card.append(`
@@ -3169,6 +3181,9 @@ git rebase --continue
         $('#errorSection').addClass('hidden');
         $('#branchInfoGroup').addClass('hidden');
 
+        // Clear attachments for new task
+        clearAttachmentList();
+
         $('#taskModal').addClass('active');
         $('#taskTitle').focus();
     }
@@ -3200,6 +3215,9 @@ git rebase --continue
         } else {
             $('#branchInfoGroup').addClass('hidden');
         }
+
+        // Load attachments
+        loadAttachments(task.id);
 
         $('#btnDelete').removeClass('hidden');
 
@@ -4243,6 +4261,285 @@ git rebase --continue
             showToast(msg, 'error');
         });
     }
+
+    // ============================================================================
+    // ATTACHMENT HANDLING
+    // ============================================================================
+
+    let currentAttachments = [];
+    let lightboxIndex = 0;
+
+    // Load attachments for a task
+    function loadAttachments(taskId) {
+        currentAttachments = [];
+        clearAttachmentList();
+
+        if (!taskId) return;
+
+        $.get('/api/tasks/' + taskId + '/attachments')
+            .done(function(attachments) {
+                currentAttachments = attachments || [];
+                renderAttachmentList();
+            })
+            .fail(function() {
+                console.log('Failed to load attachments');
+            });
+    }
+
+    // Clear the attachment list UI
+    function clearAttachmentList() {
+        $('#attachmentList').empty();
+        currentAttachments = [];
+    }
+
+    // Render the attachment list
+    function renderAttachmentList() {
+        const $list = $('#attachmentList');
+        $list.empty();
+
+        currentAttachments.forEach(function(attachment, index) {
+            const isImage = attachment.mime_type.startsWith('image/');
+            const isVideo = attachment.mime_type.startsWith('video/');
+            const sizeStr = formatFileSize(attachment.size);
+
+            let thumbnailHtml = '';
+            if (isImage) {
+                thumbnailHtml = `<img class="attachment-thumbnail" src="/uploads/${attachment.task_id}/${attachment.path.split('/').pop()}" alt="${escapeHtml(attachment.filename)}">`;
+            } else if (isVideo) {
+                thumbnailHtml = `
+                    <div class="attachment-video-thumbnail">
+                        <video src="/uploads/${attachment.task_id}/${attachment.path.split('/').pop()}" muted></video>
+                        <div class="video-play-overlay">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M8 5v14l11-7z"/>
+                            </svg>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const $item = $(`
+                <div class="attachment-item" data-id="${attachment.id}" data-index="${index}">
+                    ${thumbnailHtml}
+                    <div class="attachment-info">
+                        <span class="attachment-name" title="${escapeHtml(attachment.filename)}">${escapeHtml(attachment.filename)}</span>
+                        <span class="attachment-size">${sizeStr}</span>
+                    </div>
+                    <button class="attachment-delete" data-id="${attachment.id}" title="Remove">&times;</button>
+                </div>
+            `);
+
+            $list.append($item);
+        });
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // Upload a file
+    function uploadFile(file, taskId) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        $.ajax({
+            url: '/api/tasks/' + taskId + '/attachments',
+            type: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false
+        })
+        .done(function(attachment) {
+            currentAttachments.push(attachment);
+            renderAttachmentList();
+            showToast('File uploaded', 'success');
+            // Update task in local state
+            const taskIndex = tasks.findIndex(t => t.id === taskId);
+            if (taskIndex !== -1) {
+                if (!tasks[taskIndex].attachments) tasks[taskIndex].attachments = [];
+                tasks[taskIndex].attachments.push(attachment);
+            }
+        })
+        .fail(function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Upload failed';
+            showToast(msg, 'error');
+        });
+    }
+
+    // Delete an attachment
+    function deleteAttachment(attachmentId, taskId) {
+        $.ajax({
+            url: '/api/tasks/' + taskId + '/attachments/' + attachmentId,
+            type: 'DELETE'
+        })
+        .done(function() {
+            currentAttachments = currentAttachments.filter(a => a.id !== attachmentId);
+            renderAttachmentList();
+            showToast('Attachment deleted', 'success');
+            // Update task in local state
+            const taskIndex = tasks.findIndex(t => t.id === taskId);
+            if (taskIndex !== -1 && tasks[taskIndex].attachments) {
+                tasks[taskIndex].attachments = tasks[taskIndex].attachments.filter(a => a.id !== attachmentId);
+            }
+        })
+        .fail(function() {
+            showToast('Failed to delete attachment', 'error');
+        });
+    }
+
+    // Open lightbox
+    function openLightbox(index) {
+        if (currentAttachments.length === 0) return;
+
+        lightboxIndex = index;
+        showLightboxItem(index);
+        $('#lightbox').removeClass('hidden');
+
+        // Add keyboard listener
+        $(document).on('keydown.lightbox', function(e) {
+            if (e.key === 'Escape') closeLightbox();
+            if (e.key === 'ArrowLeft') showPrevLightboxItem();
+            if (e.key === 'ArrowRight') showNextLightboxItem();
+        });
+    }
+
+    // Close lightbox
+    function closeLightbox() {
+        $('#lightbox').addClass('hidden');
+        $('#lightboxVideo').get(0)?.pause();
+        $(document).off('keydown.lightbox');
+    }
+
+    // Show lightbox item
+    function showLightboxItem(index) {
+        const attachment = currentAttachments[index];
+        if (!attachment) return;
+
+        const isVideo = attachment.mime_type.startsWith('video/');
+        const url = '/uploads/' + attachment.task_id + '/' + attachment.path.split('/').pop();
+
+        if (isVideo) {
+            $('#lightboxImage').addClass('hidden');
+            $('#lightboxVideo').removeClass('hidden').attr('src', url);
+        } else {
+            $('#lightboxVideo').addClass('hidden').get(0)?.pause();
+            $('#lightboxImage').removeClass('hidden').attr('src', url);
+        }
+
+        $('#lightboxFilename').text(attachment.filename);
+        $('#lightboxCounter').text((index + 1) + ' / ' + currentAttachments.length);
+
+        // Show/hide navigation buttons
+        if (currentAttachments.length <= 1) {
+            $('.lightbox-prev, .lightbox-next').hide();
+        } else {
+            $('.lightbox-prev, .lightbox-next').show();
+        }
+    }
+
+    // Navigate lightbox
+    function showPrevLightboxItem() {
+        lightboxIndex = (lightboxIndex - 1 + currentAttachments.length) % currentAttachments.length;
+        showLightboxItem(lightboxIndex);
+    }
+
+    function showNextLightboxItem() {
+        lightboxIndex = (lightboxIndex + 1) % currentAttachments.length;
+        showLightboxItem(lightboxIndex);
+    }
+
+    // ============================================================================
+    // ATTACHMENT EVENT HANDLERS
+    // ============================================================================
+
+    // Drag and drop zone
+    const $dropZone = $('#attachmentDropZone');
+
+    $dropZone.on('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).addClass('drag-over');
+    });
+
+    $dropZone.on('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).removeClass('drag-over');
+    });
+
+    $dropZone.on('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).removeClass('drag-over');
+
+        const files = e.originalEvent.dataTransfer.files;
+        handleFileUpload(files);
+    });
+
+    // File input change
+    $('#attachmentInput').on('change', function() {
+        const files = this.files;
+        handleFileUpload(files);
+        this.value = ''; // Reset input
+    });
+
+    // Handle file upload
+    function handleFileUpload(files) {
+        if (!currentTaskId) {
+            showToast('Please save the task first before uploading attachments', 'warning');
+            return;
+        }
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+
+            // Validate file type
+            const allowedTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime'];
+            if (!allowedTypes.includes(file.type)) {
+                showToast('File type not allowed: ' + file.name, 'error');
+                continue;
+            }
+
+            // Validate file size (50MB)
+            if (file.size > 50 * 1024 * 1024) {
+                showToast('File too large (max 50MB): ' + file.name, 'error');
+                continue;
+            }
+
+            uploadFile(file, currentTaskId);
+        }
+    }
+
+    // Delete attachment button
+    $(document).on('click', '.attachment-delete', function(e) {
+        e.stopPropagation();
+        const attachmentId = $(this).data('id');
+        if (currentTaskId && confirm('Delete this attachment?')) {
+            deleteAttachment(attachmentId, currentTaskId);
+        }
+    });
+
+    // Click attachment to open lightbox
+    $(document).on('click', '.attachment-item', function(e) {
+        if ($(e.target).hasClass('attachment-delete')) return;
+        const index = $(this).data('index');
+        openLightbox(index);
+    });
+
+    // Lightbox controls
+    $('.lightbox-close').on('click', closeLightbox);
+    $('.lightbox-prev').on('click', showPrevLightboxItem);
+    $('.lightbox-next').on('click', showNextLightboxItem);
+
+    // Close lightbox on background click
+    $('#lightbox').on('click', function(e) {
+        if (e.target === this) {
+            closeLightbox();
+        }
+    });
 });
 
 // ============================================================================

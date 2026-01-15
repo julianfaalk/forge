@@ -3,13 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // Handler holds dependencies for HTTP handlers
@@ -72,6 +77,15 @@ func (h *Handler) getTasks(w http.ResponseWriter, r *http.Request) {
 	if tasks == nil {
 		tasks = []Task{}
 	}
+
+	// Load attachments for each task
+	for i := range tasks {
+		attachments, err := h.db.GetAttachmentsByTask(tasks[i].ID)
+		if err == nil {
+			tasks[i].Attachments = attachments
+		}
+	}
+
 	h.writeJSON(w, http.StatusOK, tasks)
 }
 
@@ -135,6 +149,13 @@ func (h *Handler) getTask(w http.ResponseWriter, r *http.Request, id string) {
 		h.writeError(w, http.StatusNotFound, "Task not found")
 		return
 	}
+
+	// Load attachments
+	attachments, err := h.db.GetAttachmentsByTask(task.ID)
+	if err == nil {
+		task.Attachments = attachments
+	}
+
 	h.writeJSON(w, http.StatusOK, task)
 }
 
@@ -222,6 +243,11 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 
+	// Load attachments for broadcast
+	if attachments, err := h.db.GetAttachmentsByTask(task.ID); err == nil {
+		task.Attachments = attachments
+	}
+
 	// Broadcast update
 	h.hub.BroadcastTaskUpdate(task)
 
@@ -237,6 +263,11 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 func (h *Handler) deleteTask(w http.ResponseWriter, r *http.Request, id string) {
 	// Stop RALPH if running
 	h.runner.Stop(id)
+
+	// Delete attachments first
+	if err := h.DeleteTaskAttachments(id); err != nil {
+		log.Printf("Warning: Failed to delete task attachments: %v", err)
+	}
 
 	if err := h.db.DeleteTask(id); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "Failed to delete task: "+err.Error())
@@ -1884,4 +1915,291 @@ func (h *Handler) HandleCreatePR(w http.ResponseWriter, r *http.Request) {
 		PRNumber: pr.Number,
 		Message:  fmt.Sprintf("PR #%d created successfully", pr.Number),
 	})
+}
+
+// ============================================================================
+// Attachment handlers
+// ============================================================================
+
+// Allowed MIME types for attachments
+var allowedMimeTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
+	"video/mp4":  true,
+	"video/webm": true,
+	"video/quicktime": true, // MOV files
+}
+
+// MaxUploadSize is the maximum file size for uploads (50MB)
+const MaxUploadSize = 50 * 1024 * 1024
+
+// UploadsDir is the directory where attachments are stored
+const UploadsDir = "uploads"
+
+// HandleTaskAttachments handles GET /api/tasks/{id}/attachments (list) and POST (upload)
+func (h *Handler) HandleTaskAttachments(w http.ResponseWriter, r *http.Request) {
+	taskID := extractTaskID(r.URL.Path)
+	if taskID == "" {
+		h.writeError(w, http.StatusBadRequest, "Task ID required")
+		return
+	}
+
+	// Verify task exists
+	task, err := h.db.GetTask(taskID)
+	if err != nil || task == nil {
+		h.writeError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		h.getTaskAttachments(w, r, taskID)
+	case http.MethodPost:
+		h.uploadTaskAttachment(w, r, taskID)
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (h *Handler) getTaskAttachments(w http.ResponseWriter, r *http.Request, taskID string) {
+	attachments, err := h.db.GetAttachmentsByTask(taskID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to get attachments: "+err.Error())
+		return
+	}
+	if attachments == nil {
+		attachments = []Attachment{}
+	}
+	h.writeJSON(w, http.StatusOK, attachments)
+}
+
+func (h *Handler) uploadTaskAttachment(w http.ResponseWriter, r *http.Request, taskID string) {
+	// Limit upload size
+	r.Body = http.MaxBytesReader(w, r.Body, MaxUploadSize)
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(MaxUploadSize); err != nil {
+		h.writeError(w, http.StatusBadRequest, "File too large or invalid form data")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "No file provided")
+		return
+	}
+	defer file.Close()
+
+	// Check MIME type
+	mimeType := header.Header.Get("Content-Type")
+	if mimeType == "" {
+		// Try to detect from file content
+		mimeType = detectMimeType(file)
+		file.Seek(0, 0) // Reset file pointer
+	}
+
+	if !allowedMimeTypes[mimeType] {
+		h.writeError(w, http.StatusBadRequest, "File type not allowed. Allowed: PNG, JPG, GIF, WEBP, MP4, MOV, WEBM")
+		return
+	}
+
+	// Create upload directory for this task
+	taskUploadDir := filepath.Join(UploadsDir, taskID)
+	if err := os.MkdirAll(taskUploadDir, 0755); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to create upload directory")
+		return
+	}
+
+	// Generate unique filename
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ext = getExtensionFromMime(mimeType)
+	}
+	uniqueFilename := uuid.New().String() + ext
+	filePath := filepath.Join(taskUploadDir, uniqueFilename)
+
+	// Save file
+	dst, err := os.Create(filePath)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to save file")
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		os.Remove(filePath) // Cleanup on failure
+		h.writeError(w, http.StatusInternalServerError, "Failed to save file")
+		return
+	}
+
+	// Create attachment record
+	attachment := &Attachment{
+		ID:        uuid.New().String(),
+		TaskID:    taskID,
+		Filename:  header.Filename,
+		MimeType:  mimeType,
+		Size:      header.Size,
+		Path:      filePath,
+		CreatedAt: time.Now(),
+	}
+
+	if err := h.db.CreateAttachment(attachment); err != nil {
+		os.Remove(filePath) // Cleanup on failure
+		h.writeError(w, http.StatusInternalServerError, "Failed to save attachment record")
+		return
+	}
+
+	// Broadcast task update with new attachment
+	task, _ := h.db.GetTask(taskID)
+	if task != nil {
+		task.Attachments, _ = h.db.GetAttachmentsByTask(taskID)
+		h.hub.BroadcastTaskUpdate(task)
+	}
+
+	h.writeJSON(w, http.StatusCreated, attachment)
+}
+
+// HandleTaskAttachment handles GET/DELETE /api/tasks/{id}/attachments/{attachmentId}
+func (h *Handler) HandleTaskAttachment(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	parts := strings.Split(path, "/attachments/")
+	if len(parts) < 2 {
+		h.writeError(w, http.StatusBadRequest, "Attachment ID required")
+		return
+	}
+
+	taskID := extractTaskID(path)
+	attachmentID := parts[1]
+
+	// Verify attachment exists and belongs to the task
+	attachment, err := h.db.GetAttachment(attachmentID)
+	if err != nil || attachment == nil {
+		h.writeError(w, http.StatusNotFound, "Attachment not found")
+		return
+	}
+
+	if attachment.TaskID != taskID {
+		h.writeError(w, http.StatusNotFound, "Attachment not found")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Serve the file
+		http.ServeFile(w, r, attachment.Path)
+	case http.MethodDelete:
+		h.deleteAttachment(w, r, attachment, taskID)
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request, attachment *Attachment, taskID string) {
+	// Delete file from disk
+	if err := os.Remove(attachment.Path); err != nil && !os.IsNotExist(err) {
+		log.Printf("Warning: Failed to delete attachment file %s: %v", attachment.Path, err)
+	}
+
+	// Delete from database
+	if err := h.db.DeleteAttachment(attachment.ID); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to delete attachment")
+		return
+	}
+
+	// Broadcast task update
+	task, _ := h.db.GetTask(taskID)
+	if task != nil {
+		task.Attachments, _ = h.db.GetAttachmentsByTask(taskID)
+		h.hub.BroadcastTaskUpdate(task)
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// HandleServeUpload serves files from the uploads directory
+func (h *Handler) HandleServeUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Extract file path from URL (remove /uploads/ prefix)
+	filePath := strings.TrimPrefix(r.URL.Path, "/uploads/")
+	fullPath := filepath.Join(UploadsDir, filePath)
+
+	// Prevent directory traversal
+	if !strings.HasPrefix(filepath.Clean(fullPath), UploadsDir) {
+		h.writeError(w, http.StatusForbidden, "Access denied")
+		return
+	}
+
+	// Check if file exists
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		h.writeError(w, http.StatusNotFound, "File not found")
+		return
+	}
+
+	http.ServeFile(w, r, fullPath)
+}
+
+// detectMimeType attempts to detect the MIME type from file content
+func detectMimeType(file multipart.File) string {
+	buffer := make([]byte, 512)
+	_, err := file.Read(buffer)
+	if err != nil {
+		return ""
+	}
+
+	return http.DetectContentType(buffer)
+}
+
+// getExtensionFromMime returns the file extension for a MIME type
+func getExtensionFromMime(mimeType string) string {
+	switch mimeType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	default:
+		return ""
+	}
+}
+
+// DeleteTaskAttachments deletes all attachments for a task (called when task is deleted)
+func (h *Handler) DeleteTaskAttachments(taskID string) error {
+	// Get all attachments for this task
+	attachments, err := h.db.GetAttachmentsByTask(taskID)
+	if err != nil {
+		return err
+	}
+
+	// Delete each file
+	for _, attachment := range attachments {
+		if err := os.Remove(attachment.Path); err != nil && !os.IsNotExist(err) {
+			log.Printf("Warning: Failed to delete attachment file %s: %v", attachment.Path, err)
+		}
+	}
+
+	// Delete records from database
+	if err := h.db.DeleteAttachmentsByTask(taskID); err != nil {
+		return err
+	}
+
+	// Try to remove the task's upload directory (if empty)
+	taskUploadDir := filepath.Join(UploadsDir, taskID)
+	os.Remove(taskUploadDir) // Ignore error if not empty
+
+	return nil
 }

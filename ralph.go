@@ -43,7 +43,7 @@ func NewRalphRunner(db *Database, hub *Hub) *RalphRunner {
 }
 
 // BuildPrompt generates the RALPH prompt from a task
-func BuildPrompt(task *Task, protectedBranches []string) string {
+func BuildPrompt(task *Task, protectedBranches []string, attachments []Attachment) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("# Task: %s\n\n", task.Title))
@@ -58,6 +58,23 @@ func BuildPrompt(task *Task, protectedBranches []string) string {
 		sb.WriteString("## Acceptance Criteria\n\n")
 		sb.WriteString(task.AcceptanceCriteria)
 		sb.WriteString("\n\n")
+	}
+
+	// Add attachments info if any
+	if len(attachments) > 0 {
+		sb.WriteString("## Attachments\n\n")
+		sb.WriteString("This task has visual references attached. See attached files for context:\n\n")
+		for _, att := range attachments {
+			// Determine file type description
+			fileType := "File"
+			if strings.HasPrefix(att.MimeType, "image/") {
+				fileType = "Screenshot"
+			} else if strings.HasPrefix(att.MimeType, "video/") {
+				fileType = "Video"
+			}
+			sb.WriteString(fmt.Sprintf("- %s: %s (Path: %s)\n", fileType, att.Filename, att.Path))
+		}
+		sb.WriteString("\nYou can read these files using the Read tool to view images for visual context.\n\n")
 	}
 
 	// Add branch protection rules if any
@@ -144,6 +161,13 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 		}
 	}
 
+	// Get attachments for the task
+	attachments, err := r.db.GetAttachmentsByTask(task.ID)
+	if err != nil {
+		log.Printf("Warning: Failed to get attachments for task %s: %v", task.ID, err)
+		attachments = nil
+	}
+
 	// Build the command
 	claudeCmd := config.ClaudeCommand
 	if claudeCmd == "" {
@@ -153,8 +177,8 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 	log.Printf("Starting RALPH for task %s in directory %s", task.ID, task.ProjectDir)
 	r.hub.BroadcastLog(task.ID, "[GRINDER] Preparing to start Claude...\n")
 
-	// Build prompt with branch protection info
-	prompt := BuildPrompt(task, protectedBranches)
+	// Build prompt with branch protection info and attachments
+	prompt := BuildPrompt(task, protectedBranches, attachments)
 	log.Printf("Prompt length: %d characters", len(prompt))
 
 	// Run in interactive mode (no -p flag) so we can send follow-up messages
@@ -303,6 +327,13 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		}
 	}
 
+	// Get attachments for the task
+	attachments, err := r.db.GetAttachmentsByTask(task.ID)
+	if err != nil {
+		log.Printf("Warning: Failed to get attachments for task %s: %v", task.ID, err)
+		attachments = nil
+	}
+
 	// Build continuation prompt
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Continuing Task: %s\n\n", task.Title))
@@ -318,6 +349,22 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		sb.WriteString("## Acceptance Criteria\n\n")
 		sb.WriteString(task.AcceptanceCriteria)
 		sb.WriteString("\n\n")
+	}
+
+	// Add attachments info if any
+	if len(attachments) > 0 {
+		sb.WriteString("## Attachments\n\n")
+		sb.WriteString("This task has visual references attached. See attached files for context:\n\n")
+		for _, att := range attachments {
+			fileType := "File"
+			if strings.HasPrefix(att.MimeType, "image/") {
+				fileType = "Screenshot"
+			} else if strings.HasPrefix(att.MimeType, "video/") {
+				fileType = "Video"
+			}
+			sb.WriteString(fmt.Sprintf("- %s: %s (Path: %s)\n", fileType, att.Filename, att.Path))
+		}
+		sb.WriteString("\nYou can read these files using the Read tool to view images for visual context.\n\n")
 	}
 
 	// Add branch protection rules if any

@@ -258,6 +258,31 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 5 completed")
 	}
 
+	// ========== Migration 6: Attachments table for task screenshots/videos ==========
+	if version < 6 {
+		log.Println("Running migration 6: Creating attachments table")
+		migration6 := `
+		CREATE TABLE IF NOT EXISTS attachments (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			filename TEXT NOT NULL,
+			mime_type TEXT NOT NULL,
+			size INTEGER NOT NULL,
+			path TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_attachments_task_id ON attachments(task_id);
+
+		INSERT INTO schema_version (version) VALUES (6);
+		`
+		if _, err := d.db.Exec(migration6); err != nil {
+			return err
+		}
+		log.Println("Migration 6 completed")
+	}
+
 	return nil
 }
 
@@ -1205,4 +1230,87 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 	}
 
 	return &c, nil
+}
+
+// ============================================================================
+// Attachment CRUD-Operationen
+// ============================================================================
+
+// GetAttachmentsByTask gibt alle Attachments für einen Task zurück.
+func (d *Database) GetAttachmentsByTask(taskID string) ([]Attachment, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query(`
+		SELECT id, task_id, filename, mime_type, size, path, created_at
+		FROM attachments
+		WHERE task_id = ?
+		ORDER BY created_at ASC
+	`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var attachments []Attachment
+	for rows.Next() {
+		var a Attachment
+		err := rows.Scan(&a.ID, &a.TaskID, &a.Filename, &a.MimeType, &a.Size, &a.Path, &a.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, a)
+	}
+
+	return attachments, rows.Err()
+}
+
+// GetAttachment gibt ein einzelnes Attachment anhand seiner ID zurück.
+func (d *Database) GetAttachment(id string) (*Attachment, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var a Attachment
+	err := d.db.QueryRow(`
+		SELECT id, task_id, filename, mime_type, size, path, created_at
+		FROM attachments WHERE id = ?
+	`, id).Scan(&a.ID, &a.TaskID, &a.Filename, &a.MimeType, &a.Size, &a.Path, &a.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// CreateAttachment erstellt einen neuen Attachment-Datensatz.
+func (d *Database) CreateAttachment(attachment *Attachment) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		INSERT INTO attachments (id, task_id, filename, mime_type, size, path, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, attachment.ID, attachment.TaskID, attachment.Filename, attachment.MimeType,
+		attachment.Size, attachment.Path, attachment.CreatedAt)
+	return err
+}
+
+// DeleteAttachment löscht ein Attachment anhand seiner ID.
+func (d *Database) DeleteAttachment(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`DELETE FROM attachments WHERE id = ?`, id)
+	return err
+}
+
+// DeleteAttachmentsByTask löscht alle Attachments für einen Task.
+func (d *Database) DeleteAttachmentsByTask(taskID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`DELETE FROM attachments WHERE task_id = ?`, taskID)
+	return err
 }

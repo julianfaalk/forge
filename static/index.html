@@ -227,6 +227,30 @@
                         <textarea id="taskCriteria" rows="4" placeholder="When is the task complete?"></textarea>
                     </div>
 
+                    <!-- Attachments Section -->
+                    <div class="form-group" id="attachmentsSection">
+                        <label>Attachments (optional)</label>
+                        <div id="attachmentDropZone" class="attachment-drop-zone">
+                            <div class="drop-zone-content">
+                                <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                    <polyline points="17 8 12 3 7 8"/>
+                                    <line x1="12" y1="3" x2="12" y2="15"/>
+                                </svg>
+                                <p>Drag & Drop files here</p>
+                                <span class="drop-zone-or">or</span>
+                                <label class="btn btn-secondary btn-small">
+                                    Click to Upload
+                                    <input type="file" id="attachmentInput" multiple accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden>
+                                </label>
+                                <p class="help-text">PNG, JPG, GIF, WEBP, MP4, MOV, WEBM</p>
+                            </div>
+                        </div>
+                        <div id="attachmentList" class="attachment-list">
+                            <!-- Attachments rendered here -->
+                        </div>
+                    </div>
+
                     <div class="form-row">
                         <div class="form-group">
                             <label for="taskProject">Project</label>
@@ -764,6 +788,23 @@
     <div id="reconnectBanner" class="reconnect-banner hidden">
         <span>Connection lost</span>
         <button id="btnReconnect" class="btn btn-small">Reconnect</button>
+    </div>
+
+    <!-- Lightbox for viewing attachments -->
+    <div id="lightbox" class="lightbox hidden">
+        <div class="lightbox-content">
+            <button class="lightbox-close">&times;</button>
+            <button class="lightbox-prev">&lsaquo;</button>
+            <button class="lightbox-next">&rsaquo;</button>
+            <div class="lightbox-media">
+                <img id="lightboxImage" class="hidden" alt="">
+                <video id="lightboxVideo" class="hidden" controls></video>
+            </div>
+            <div class="lightbox-info">
+                <span id="lightboxFilename"></span>
+                <span id="lightboxCounter"></span>
+            </div>
+        </div>
     </div>
 
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
