@@ -438,8 +438,6 @@ $(document).ready(function() {
             claude_command: $('#settingsClaudeCommand').val().trim(),
             default_max_iterations: parseInt($('#settingsMaxIterations').val()) || 10,
             github_token: $('#settingsGithubToken').val().trim(),
-            auto_commit: $('#settingsAutoCommit').is(':checked'),
-            auto_push: $('#settingsAutoPush').is(':checked'),
             default_branch: $('#settingsDefaultBranch').val().trim(),
             default_priority: parseInt($('#settingsDefaultPriority').val()) || 2,
             auto_archive_days: parseInt($('#settingsAutoArchive').val()) || 0
@@ -790,14 +788,6 @@ $(document).ready(function() {
         const task = tasks.find(t => t.id === taskId);
         const taskTitle = task ? task.title : 'Task';
         showToast(`Deployed: ${taskTitle}`, 'success');
-
-        // Trigger rocket animation on Done column
-        const $doneColumn = $('.column[data-status="done"]');
-        const $rocketIcon = $doneColumn.find('.column-rocket');
-        if ($rocketIcon.length) {
-            $rocketIcon.addClass('launching');
-            setTimeout(() => $rocketIcon.removeClass('launching'), 1500);
-        }
     }
 
     function showMergeConflictModal(conflict) {
@@ -1162,6 +1152,26 @@ git rebase --continue
         });
     }
 
+    // Build dropdown menu items based on task state
+    function buildTaskDropdownItems(task) {
+        const items = [];
+        const mergeBranch = config.default_branch || 'main';
+
+        // Add Merge option for tasks with branch in review or done status (and no conflict PR)
+        if (task.working_branch && (task.status === 'review' || task.status === 'done') && !task.conflict_pr_url) {
+            items.push(`
+                <button class="task-dropdown-item merge-item" data-action="merge" data-id="${task.id}">
+                    <svg viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.5 2.5 0 0 0 6 8.5h1.5v5.128a2.251 2.251 0 1 0 1.5 0V8.5H10a2.5 2.5 0 0 0 2.5-2.5v-.878a2.25 2.25 0 1 0-1.5 0v.878a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-.878ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM3.5 3.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0Zm8.75-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>
+                    </svg>
+                    Merge to ${escapeHtml(mergeBranch)}
+                </button>
+            `);
+        }
+
+        return items;
+    }
+
     function createTaskCard(task) {
         const taskType = task.task_type || taskTypes.find(t => t.id === task.task_type_id);
         const typeBadge = taskType ?
@@ -1175,8 +1185,24 @@ git rebase --continue
             branchBadge = `<span class="task-branch-badge" title="${escapeHtml(task.working_branch)}"><svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg><span class="branch-name">${escapeHtml(shortBranch)}</span></span>`;
         }
 
+        // Build dropdown menu items
+        const dropdownItems = buildTaskDropdownItems(task);
+        const dropdownHtml = dropdownItems.length > 0 ? `
+            <div class="task-card-actions">
+                <button class="task-dropdown-toggle" data-id="${task.id}">
+                    <svg viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/>
+                    </svg>
+                </button>
+                <div class="task-dropdown-menu" data-task-id="${task.id}">
+                    ${dropdownItems.join('')}
+                </div>
+            </div>
+        ` : '';
+
         const $card = $(`
             <div class="task-card" data-id="${task.id}" draggable="true">
+                ${dropdownHtml}
                 <div class="task-card-header">
                     <div class="priority-indicator priority-${task.priority}"></div>
                     <span class="task-title">${escapeHtml(task.title)}</span>
@@ -1202,6 +1228,22 @@ git rebase --continue
             $card.find('.task-card-footer').append(
                 '<span class="blocked-icon">&#9888;</span>'
             );
+        }
+
+        // Show conflict section if task has a conflict PR open
+        if (task.working_branch && task.conflict_pr_url && task.conflict_pr_number) {
+            $card.append(`
+                <div class="merge-conflict-section">
+                    <div class="merge-conflict-header">
+                        <span class="conflict-icon">&#9888;</span>
+                        <span class="conflict-text">Conflict</span>
+                    </div>
+                    <a href="${escapeHtml(task.conflict_pr_url)}" target="_blank" class="btn-resolve-github">
+                        &#128279; Resolve in GitHub
+                    </a>
+                    <span class="pr-number">#${task.conflict_pr_number}</span>
+                </div>
+            `);
         }
 
         return $card;
@@ -1628,7 +1670,11 @@ git rebase --continue
 
         // Task card clicks
         $(document).on('click', '.task-card', function(e) {
+            // Don't open modal if clicking interactive elements
             if ($(e.target).hasClass('btn-live')) return;
+            if ($(e.target).hasClass('btn-merge') || $(e.target).closest('.btn-merge').length) return;
+            if ($(e.target).closest('.merge-conflict-section').length) return;
+            if ($(e.target).closest('.task-card-actions').length) return;
             const taskId = $(this).data('id');
             const task = tasks.find(t => t.id === taskId);
             if (task) openEditTaskModal(task);
@@ -1647,6 +1693,53 @@ git rebase --continue
                         $log[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }
                 }, 100);
+            }
+        });
+
+        // Merge button click (legacy, kept for conflict section)
+        $(document).on('click', '.btn-merge', function(e) {
+            e.stopPropagation();
+            const taskId = $(this).data('id');
+            mergeTaskToMain(taskId, $(this));
+        });
+
+        // Task dropdown toggle
+        $(document).on('click', '.task-dropdown-toggle', function(e) {
+            e.stopPropagation();
+            const $toggle = $(this);
+            const $menu = $toggle.siblings('.task-dropdown-menu');
+            const isOpen = $menu.hasClass('open');
+
+            // Close all other dropdowns first
+            $('.task-dropdown-menu.open').removeClass('open');
+            $('.task-dropdown-toggle.active').removeClass('active');
+
+            if (!isOpen) {
+                $toggle.addClass('active');
+                $menu.addClass('open');
+            }
+        });
+
+        // Task dropdown item click
+        $(document).on('click', '.task-dropdown-item', function(e) {
+            e.stopPropagation();
+            const action = $(this).data('action');
+            const taskId = $(this).data('id');
+
+            // Close dropdown
+            $(this).closest('.task-dropdown-menu').removeClass('open');
+            $(this).closest('.task-card-actions').find('.task-dropdown-toggle').removeClass('active');
+
+            if (action === 'merge') {
+                mergeTaskToMain(taskId, $(this));
+            }
+        });
+
+        // Close dropdown when clicking outside
+        $(document).on('click', function(e) {
+            if (!$(e.target).closest('.task-card-actions').length) {
+                $('.task-dropdown-menu.open').removeClass('open');
+                $('.task-dropdown-toggle.active').removeClass('active');
             }
         });
 
@@ -2712,6 +2805,74 @@ git rebase --continue
         });
     }
 
+    // ============================================================================
+    // Merge to Main Functions
+    // ============================================================================
+
+    function mergeTaskToMain(taskId, $element) {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+
+        // Show toast to indicate action started
+        showToast('Merging branch...');
+
+        // If element is a button with visible state, update it
+        const isButton = $element && $element.hasClass('btn-merge');
+        let originalText = '';
+        if (isButton) {
+            originalText = $element.html();
+            $element.html('<span class="spinner-small"></span> Merging...');
+            $element.prop('disabled', true);
+            $element.addClass('merging');
+        }
+
+        $.ajax({
+            url: '/api/tasks/' + taskId + '/merge',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({})
+        })
+        .done(function(data) {
+            if (data.success) {
+                // Success!
+                if (isButton) {
+                    $element.html('&#10003; Merged');
+                    $element.removeClass('merging').addClass('merged');
+                }
+                showToast('Merged successfully!', 'success');
+
+                // Reload tasks to update UI (branch badge gone, merge option gone)
+                setTimeout(function() {
+                    loadTasks();
+                }, 1000);
+            } else if (data.conflict && data.pr_url) {
+                // Conflict - PR was created
+                showToast('Conflict detected - PR created', 'warning');
+
+                // Update task in local state
+                const idx = tasks.findIndex(t => t.id === taskId);
+                if (idx !== -1) {
+                    tasks[idx].conflict_pr_url = data.pr_url;
+                    tasks[idx].conflict_pr_number = data.pr_number;
+                }
+
+                // Re-render to show conflict state
+                renderAllTasks();
+            }
+        })
+        .fail(function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Merge failed';
+            showToast(msg, 'error');
+
+            // Restore button if applicable
+            if (isButton) {
+                $element.html(originalText);
+                $element.prop('disabled', false);
+                $element.removeClass('merging');
+            }
+        });
+    }
+
     // GitHub Modal Functions
     function openGithubModal() {
         $('#githubToken').val(config.github_token || '');
@@ -2763,8 +2924,6 @@ git rebase --continue
         $('#settingsClaudeCommand').val(config.claude_command || 'claude');
         $('#settingsMaxIterations').val(config.default_max_iterations || 10);
         $('#settingsGithubToken').val(config.github_token || '');
-        $('#settingsAutoCommit').prop('checked', config.auto_commit || false);
-        $('#settingsAutoPush').prop('checked', config.auto_push || false);
         $('#settingsDefaultBranch').val(config.default_branch || 'main');
         $('#settingsDefaultPriority').val(config.default_priority || 2);
         $('#settingsAutoArchive').val(config.auto_archive_days || 0);

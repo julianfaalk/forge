@@ -232,6 +232,32 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 4 completed")
 	}
 
+	// ========== Migration 5: Conflict PR tracking for tasks ==========
+	if version < 5 {
+		log.Println("Running migration 5: Adding conflict PR fields to tasks")
+
+		newColumns := []struct {
+			name string
+			def  string
+		}{
+			{"conflict_pr_url", "TEXT DEFAULT ''"},    // GitHub PR URL for conflict resolution
+			{"conflict_pr_number", "INTEGER DEFAULT 0"}, // GitHub PR number
+		}
+
+		for _, col := range newColumns {
+			query := "ALTER TABLE tasks ADD COLUMN " + col.name + " " + col.def
+			if _, err := d.db.Exec(query); err != nil {
+				log.Printf("Note: Column tasks.%s may already exist: %v", col.name, err)
+			}
+		}
+
+		_, err := d.db.Exec("INSERT INTO schema_version (version) VALUES (5)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 5 completed")
+	}
+
 	return nil
 }
 
@@ -250,6 +276,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
+		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -270,6 +297,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -304,6 +332,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
+		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -313,6 +342,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+		&t.ConflictPRURL, &t.ConflictPRNumber,
 		&ttID, &ttName, &ttColor, &ttIsSystem,
 	)
 	if err == sql.ErrNoRows {
@@ -342,6 +372,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
+		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -363,6 +394,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -446,13 +478,15 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		SELECT id, title, description, acceptance_criteria, status, priority,
 		       current_iteration, max_iterations, logs, error, project_dir,
 		       created_at, updated_at,
-		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, '')
+		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0)
 		FROM tasks WHERE id = ?
 	`, id).Scan(
 		&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
 		&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+		&t.ConflictPRURL, &t.ConflictPRNumber,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -553,6 +587,17 @@ func (d *Database) UpdateTaskError(id string, errorMsg string) error {
 	_, err := d.db.Exec(`
 		UPDATE tasks SET error = ?, updated_at = ? WHERE id = ?
 	`, errorMsg, time.Now(), id)
+	return err
+}
+
+// UpdateTaskConflictPR updates the conflict PR info for a task.
+func (d *Database) UpdateTaskConflictPR(id string, prURL string, prNumber int) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET conflict_pr_url = ?, conflict_pr_number = ?, updated_at = ? WHERE id = ?
+	`, prURL, prNumber, time.Now(), id)
 	return err
 }
 

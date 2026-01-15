@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -159,9 +160,6 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	// Check if moving to progress - need to start RALPH and create branch
 	startRalph := req.Status != nil && *req.Status == StatusProgress && oldStatus != StatusProgress
 
-	// Check if moving to done - need to merge and push
-	movingToDone := req.Status != nil && *req.Status == StatusDone
-
 	// Check if moving to review - need to commit and push branch for review
 	// Push when moving TO review from any status (not just from progress)
 	movingToReview := req.Status != nil && *req.Status == StatusReview && oldStatus != StatusReview
@@ -217,35 +215,6 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 
-	// Handle merge when moving to done
-	var mergeConflict *MergeConflict
-	if movingToDone && currentTask.WorkingBranch != "" {
-		projectDir := currentTask.ProjectDir
-		if projectDir == "" && currentTask.ProjectID != "" {
-			project, _ := h.db.GetProject(currentTask.ProjectID)
-			if project != nil {
-				projectDir = project.Path
-			}
-		}
-		if projectDir != "" && IsGitRepository(projectDir) {
-			result := TryMergeWorkingBranch(projectDir, currentTask.WorkingBranch, currentTask.ID, currentTask.Title)
-			if !result.Success {
-				if result.Conflict != nil {
-					// Merge conflict - keep in review and notify UI
-					mergeConflict = result.Conflict
-					reviewStatus := StatusReview
-					req.Status = &reviewStatus
-					h.db.UpdateTaskError(id, "Merge conflict: "+result.Message)
-				} else {
-					// Other merge error - move to blocked
-					blockedStatus := StatusBlocked
-					req.Status = &blockedStatus
-					h.db.UpdateTaskError(id, "Merge failed: "+result.Message)
-				}
-			}
-		}
-	}
-
 	task, err := h.db.UpdateTask(id, req)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "Failed to update task: "+err.Error())
@@ -259,16 +228,6 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	if startRalph {
 		config, _ := h.db.GetConfig()
 		go h.runner.Start(task, config)
-	}
-
-	// Broadcast deployment success if we moved to done and had a branch
-	if movingToDone && currentTask.WorkingBranch != "" && task.Status == StatusDone {
-		h.hub.BroadcastDeploymentSuccess(task.ID, "Task deployed successfully!")
-	}
-
-	// Broadcast merge conflict if there was one
-	if mergeConflict != nil {
-		h.hub.BroadcastMergeConflict(mergeConflict)
 	}
 
 	h.writeJSON(w, http.StatusOK, task)
@@ -1227,6 +1186,168 @@ func (h *Handler) HandleDeployTask(w http.ResponseWriter, r *http.Request) {
 		CommitHash: commitHash,
 		PushURL:    remoteURL,
 	})
+}
+
+// HandleMergeTask handles POST /api/tasks/{id}/merge
+// Merges the task's working branch into the default branch (e.g., main).
+// On conflict, creates a GitHub PR for manual resolution.
+func (h *Handler) HandleMergeTask(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[HandleMergeTask] Method: %s, URL: %s", r.Method, r.URL.Path)
+	if r.Method != http.MethodPost {
+		log.Printf("[HandleMergeTask] Method not allowed: %s", r.Method)
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	taskID := extractTaskID(r.URL.Path)
+	task, err := h.db.GetTask(taskID)
+	if err != nil || task == nil {
+		h.writeError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+
+	// Task must have a working branch
+	if task.WorkingBranch == "" {
+		h.writeError(w, http.StatusBadRequest, "Task has no working branch")
+		return
+	}
+
+	// Determine project directory
+	projectDir := task.ProjectDir
+	if projectDir == "" && task.ProjectID != "" {
+		project, _ := h.db.GetProject(task.ProjectID)
+		if project != nil {
+			projectDir = project.Path
+		}
+	}
+
+	if projectDir == "" {
+		h.writeError(w, http.StatusBadRequest, "Task has no project directory")
+		return
+	}
+
+	// Check if it's a git repo
+	if !IsGitRepository(projectDir) {
+		h.writeError(w, http.StatusBadRequest, "Project is not a git repository")
+		return
+	}
+
+	// Get config for default branch
+	config, _ := h.db.GetConfig()
+	targetBranch := "main"
+	if config != nil && config.DefaultBranch != "" {
+		targetBranch = config.DefaultBranch
+	}
+
+	// Check if the working branch still exists locally
+	if !BranchExists(projectDir, task.WorkingBranch) {
+		// Branch doesn't exist - it was probably already merged via GitHub PR
+		// Clear the working branch and conflict PR info
+		h.db.UpdateTaskWorkingBranch(taskID, "")
+		h.db.UpdateTaskConflictPR(taskID, "", 0)
+
+		// Broadcast task update
+		updatedTask, _ := h.db.GetTask(taskID)
+		if updatedTask != nil {
+			h.hub.BroadcastTaskUpdate(updatedTask)
+		}
+
+		h.writeJSON(w, http.StatusOK, MergeResponse{
+			Success: true,
+			Message: "Branch already merged (PR was completed on GitHub)",
+		})
+		return
+	}
+
+	// Try to merge the working branch
+	mergeResult := TryMergeWorkingBranch(projectDir, task.WorkingBranch, targetBranch, taskID, task.Title)
+
+	if mergeResult.Success {
+		// Success! Clear the working branch from the task
+		h.db.UpdateTaskWorkingBranch(taskID, "")
+
+		// Also clear any conflict PR info
+		h.db.UpdateTaskConflictPR(taskID, "", 0)
+
+		// Broadcast task update
+		updatedTask, _ := h.db.GetTask(taskID)
+		if updatedTask != nil {
+			h.hub.BroadcastTaskUpdate(updatedTask)
+		}
+
+		h.writeJSON(w, http.StatusOK, MergeResponse{
+			Success: true,
+			Message: mergeResult.Message,
+		})
+		return
+	}
+
+	// Merge failed - check if it's a conflict
+	if mergeResult.Conflict != nil {
+		// Try to create a GitHub PR
+		remoteURL, err := GetRemoteURL(projectDir)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to get remote URL: "+err.Error())
+			return
+		}
+
+		repoFullName, err := ParseGitHubRepoFromURL(remoteURL)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to parse GitHub repo: "+err.Error())
+			return
+		}
+
+		// Get GitHub token from config
+		if config == nil || config.GithubToken == "" {
+			h.writeError(w, http.StatusBadRequest, "GitHub token not configured - cannot create PR")
+			return
+		}
+
+		// Build PR body
+		prBody := fmt.Sprintf("## Task: %s\n\n", task.Title)
+		if task.Description != "" {
+			prBody += fmt.Sprintf("### Description\n%s\n\n", task.Description)
+		}
+		if task.AcceptanceCriteria != "" {
+			prBody += fmt.Sprintf("### Acceptance Criteria\n%s\n\n", task.AcceptanceCriteria)
+		}
+		prBody += "---\n*Created by GRINDER due to merge conflict*"
+
+		// Create GitHub PR
+		ghClient := NewGitHubClient(config.GithubToken)
+		pr, err := ghClient.CreatePullRequest(
+			repoFullName,
+			task.Title,
+			prBody,
+			task.WorkingBranch,
+			targetBranch,
+		)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to create PR: "+err.Error())
+			return
+		}
+
+		// Store PR info in task
+		h.db.UpdateTaskConflictPR(taskID, pr.HTMLURL, pr.Number)
+
+		// Broadcast task update
+		updatedTask, _ := h.db.GetTask(taskID)
+		if updatedTask != nil {
+			h.hub.BroadcastTaskUpdate(updatedTask)
+		}
+
+		h.writeJSON(w, http.StatusOK, MergeResponse{
+			Success:  false,
+			Message:  "Merge conflict detected - PR created for manual resolution",
+			Conflict: true,
+			PRURL:    pr.HTMLURL,
+			PRNumber: pr.Number,
+		})
+		return
+	}
+
+	// Some other merge error (not a conflict)
+	h.writeError(w, http.StatusInternalServerError, "Merge failed: "+mergeResult.Message)
 }
 
 // HandleScanAllProjects handles POST /api/projects/scan-all

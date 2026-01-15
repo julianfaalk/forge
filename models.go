@@ -50,6 +50,10 @@ type Task struct {
 	TaskTypeID    string `json:"task_type_id,omitempty"`   // Verknüpfter Task-Typ
 	WorkingBranch string `json:"working_branch,omitempty"` // Aktueller Git-Branch
 
+	// Conflict PR tracking - when merge fails and PR is created
+	ConflictPRURL    string `json:"conflict_pr_url,omitempty"`    // GitHub PR URL for conflict resolution
+	ConflictPRNumber int    `json:"conflict_pr_number,omitempty"` // GitHub PR number
+
 	// Berechnete Felder für API-Responses (nicht in DB gespeichert)
 	TaskType *TaskType `json:"task_type,omitempty"` // Task-Typ-Details (bei JOIN)
 	Project  *Project  `json:"project,omitempty"`   // Projekt-Details (bei JOIN)
@@ -254,6 +258,15 @@ type DeploymentResponse struct {
 	CommitHash   string `json:"commit_hash,omitempty"`   // SHA des Commits
 	PushURL      string `json:"push_url,omitempty"`      // Remote-URL
 	ErrorMessage string `json:"error_message,omitempty"` // Fehlermeldung falls !success
+}
+
+// MergeResponse is the response from the merge endpoint.
+type MergeResponse struct {
+	Success  bool   `json:"success"`             // true = merge successful
+	Message  string `json:"message,omitempty"`   // Status message
+	Conflict bool   `json:"conflict,omitempty"`  // true = conflict detected, PR created
+	PRURL    string `json:"pr_url,omitempty"`    // GitHub PR URL (when conflict)
+	PRNumber int    `json:"pr_number,omitempty"` // GitHub PR number (when conflict)
 }
 
 // ProjectInfo enthält Informationen über ein erkanntes Projekt (Git oder nicht-Git).

@@ -84,6 +84,7 @@ func main() {
 	mux.HandleFunc("/api/tasks", handler.HandleTasks)
 	mux.HandleFunc("/api/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		log.Printf("[API] %s %s", r.Method, path)
 		// Spezielle Task-Aktionen basierend auf dem URL-Suffix
 		if strings.HasSuffix(path, "/pause") {
 			handler.HandleTaskPause(w, r) // RALPH-Prozess pausieren
@@ -95,6 +96,9 @@ func main() {
 			handler.HandleTaskFeedback(w, r) // Feedback an Claude senden
 		} else if strings.HasSuffix(path, "/deploy") {
 			handler.HandleDeployTask(w, r) // Task deployen (commit & push)
+		} else if strings.HasSuffix(path, "/merge") {
+			log.Printf("[API] Routing to HandleMergeTask")
+			handler.HandleMergeTask(w, r) // Branch in main mergen
 		} else if strings.HasSuffix(path, "/resolve-conflict") {
 			handler.HandleResolveConflict(w, r) // RALPH löst Merge-Konflikt
 		} else {
@@ -203,6 +207,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		// Preflight-Requests direkt beantworten
 		if r.Method == "OPTIONS" {
+			log.Printf("[CORS] Preflight request: %s", r.URL.Path)
 			w.WriteHeader(http.StatusOK)
 			return
 		}

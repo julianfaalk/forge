@@ -88,6 +88,35 @@ func GetRemoteURL(path string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// ParseGitHubRepoFromURL extracts owner/repo from a GitHub remote URL.
+// Supports both HTTPS and SSH formats:
+// - https://github.com/owner/repo.git
+// - git@github.com:owner/repo.git
+func ParseGitHubRepoFromURL(remoteURL string) (string, error) {
+	remoteURL = strings.TrimSpace(remoteURL)
+	remoteURL = strings.TrimSuffix(remoteURL, ".git")
+
+	// HTTPS format: https://github.com/owner/repo
+	if strings.HasPrefix(remoteURL, "https://github.com/") {
+		path := strings.TrimPrefix(remoteURL, "https://github.com/")
+		parts := strings.Split(path, "/")
+		if len(parts) >= 2 {
+			return parts[0] + "/" + parts[1], nil
+		}
+	}
+
+	// SSH format: git@github.com:owner/repo
+	if strings.HasPrefix(remoteURL, "git@github.com:") {
+		path := strings.TrimPrefix(remoteURL, "git@github.com:")
+		parts := strings.Split(path, "/")
+		if len(parts) >= 2 {
+			return parts[0] + "/" + parts[1], nil
+		}
+	}
+
+	return "", fmt.Errorf("could not parse GitHub repo from URL: %s", remoteURL)
+}
+
 // GetGitInfo retrieves complete git information for a directory
 func GetGitInfo(path string) *GitInfo {
 	info := &GitInfo{
@@ -594,9 +623,10 @@ func AbortMerge(path string) error {
 	return err
 }
 
-// TryMergeWorkingBranch attempts to merge a working branch into the default branch.
+// TryMergeWorkingBranch attempts to merge a working branch into the target branch.
 // Returns a MergeResult with conflict details if the merge fails.
-func TryMergeWorkingBranch(path string, workingBranch string, taskID string, taskTitle string) *MergeResult {
+// If targetBranch is empty, it auto-detects the default branch.
+func TryMergeWorkingBranch(path string, workingBranch string, targetBranch string, taskID string, taskTitle string) *MergeResult {
 	if !IsGitRepository(path) {
 		return &MergeResult{
 			Success: false,
@@ -627,8 +657,11 @@ func TryMergeWorkingBranch(path string, workingBranch string, taskID string, tas
 	// Push working branch to remote first (so the work is saved)
 	PushToRemote(path) // Ignore errors
 
-	// Get the default branch
-	defaultBranch := GetDefaultBranch(path)
+	// Use provided target branch or auto-detect
+	defaultBranch := targetBranch
+	if defaultBranch == "" {
+		defaultBranch = GetDefaultBranch(path)
+	}
 
 	// Checkout default branch
 	if err := CheckoutBranch(path, defaultBranch); err != nil {

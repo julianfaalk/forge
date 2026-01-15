@@ -159,7 +159,7 @@
 
             <div class="column" data-status="done">
                 <div class="column-header">
-                    <h2><span class="column-rocket" title="Tasks here are automatically merged and pushed">&#128640;</span> Done</h2>
+                    <h2>Done</h2>
                 </div>
                 <div class="tasks-container"></div>
             </div>
@@ -544,25 +544,9 @@
                     </div>
 
                     <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="settingsAutoCommit">
-                            Auto-commit on task completion
-                        </label>
-                        <p class="help-text">Automatically commit when a task is moved to Done</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="settingsAutoPush">
-                            Auto-push after commit
-                        </label>
-                        <p class="help-text">Automatically push after changes are committed</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="settingsDefaultBranch">Default Branch</label>
+                        <label for="settingsDefaultBranch">Default Merge Branch</label>
                         <input type="text" id="settingsDefaultBranch" placeholder="main">
-                        <p class="help-text">Branch used for new projects</p>
+                        <p class="help-text">Target branch for merging completed tasks (e.g., main, develop)</p>
                     </div>
                 </div>
 

@@ -125,3 +125,74 @@ func (c *GitHubClient) CreateRepository(name, description string, private bool) 
 func (c *GitHubClient) GetAuthenticatedUser() (*GitHubUser, error) {
 	return c.ValidateToken()
 }
+
+// GitHubPullRequest represents a GitHub pull request
+type GitHubPullRequest struct {
+	ID        int    `json:"id"`
+	Number    int    `json:"number"`
+	State     string `json:"state"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	HTMLURL   string `json:"html_url"`
+	DiffURL   string `json:"diff_url"`
+	CreatedAt string `json:"created_at"`
+	Head      struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// GitHubCreatePRRequest represents the request body for creating a PR
+type GitHubCreatePRRequest struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	Head  string `json:"head"` // Branch with changes
+	Base  string `json:"base"` // Target branch (e.g., main)
+}
+
+// CreatePullRequest creates a new pull request in a repository
+// owner/repo format should be passed for repoFullName (e.g., "user/repo")
+func (c *GitHubClient) CreatePullRequest(repoFullName, title, body, head, base string) (*GitHubPullRequest, error) {
+	reqBody := GitHubCreatePRRequest{
+		Title: title,
+		Body:  body,
+		Head:  head,
+		Base:  base,
+	}
+
+	jsonBody, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("%s/repos/%s/pulls", githubAPIURL, repoFullName)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var pr GitHubPullRequest
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		return nil, err
+	}
+
+	return &pr, nil
+}
