@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -216,6 +217,7 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	}
 
 	// Handle merge when moving to done
+	var mergeConflict *MergeConflict
 	if movingToDone && currentTask.WorkingBranch != "" {
 		projectDir := currentTask.ProjectDir
 		if projectDir == "" && currentTask.ProjectID != "" {
@@ -225,14 +227,20 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 			}
 		}
 		if projectDir != "" && IsGitRepository(projectDir) {
-			err := MergeWorkingBranchToDefault(projectDir, currentTask.WorkingBranch, currentTask.Title)
-			if err != nil {
-				// Merge failed - move to blocked instead
-				blockedStatus := StatusBlocked
-				req.Status = &blockedStatus
-				errorMsg := "Merge failed: " + err.Error()
-				h.db.UpdateTaskError(id, errorMsg)
-				// Continue to update the task with blocked status
+			result := TryMergeWorkingBranch(projectDir, currentTask.WorkingBranch, currentTask.ID, currentTask.Title)
+			if !result.Success {
+				if result.Conflict != nil {
+					// Merge conflict - keep in review and notify UI
+					mergeConflict = result.Conflict
+					reviewStatus := StatusReview
+					req.Status = &reviewStatus
+					h.db.UpdateTaskError(id, "Merge conflict: "+result.Message)
+				} else {
+					// Other merge error - move to blocked
+					blockedStatus := StatusBlocked
+					req.Status = &blockedStatus
+					h.db.UpdateTaskError(id, "Merge failed: "+result.Message)
+				}
 			}
 		}
 	}
@@ -255,6 +263,11 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	// Broadcast deployment success if we moved to done and had a branch
 	if movingToDone && currentTask.WorkingBranch != "" && task.Status == StatusDone {
 		h.hub.BroadcastDeploymentSuccess(task.ID, "Task deployed successfully!")
+	}
+
+	// Broadcast merge conflict if there was one
+	if mergeConflict != nil {
+		h.hub.BroadcastMergeConflict(mergeConflict)
 	}
 
 	h.writeJSON(w, http.StatusOK, task)
@@ -1272,5 +1285,88 @@ func (h *Handler) HandleScanAllProjects(w http.ResponseWriter, r *http.Request) 
 		"scanned":  len(projects),
 		"created":  len(created),
 		"projects": created,
+	})
+}
+
+// HandleResolveConflict handles POST /api/tasks/{id}/resolve-conflict
+// This triggers RALPH to resolve a merge conflict
+func (h *Handler) HandleResolveConflict(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	taskID := extractTaskID(r.URL.Path)
+	task, err := h.db.GetTask(taskID)
+	if err != nil || task == nil {
+		h.writeError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+
+	if task.WorkingBranch == "" {
+		h.writeError(w, http.StatusBadRequest, "Task has no working branch")
+		return
+	}
+
+	// Determine project directory
+	projectDir := task.ProjectDir
+	if projectDir == "" && task.ProjectID != "" {
+		project, _ := h.db.GetProject(task.ProjectID)
+		if project != nil {
+			projectDir = project.Path
+		}
+	}
+
+	if projectDir == "" {
+		h.writeError(w, http.StatusBadRequest, "Task has no project directory")
+		return
+	}
+
+	// Get conflict files
+	defaultBranch := GetDefaultBranch(projectDir)
+
+	// Create a special prompt for RALPH to resolve the conflict
+	conflictPrompt := fmt.Sprintf(`MERGE CONFLICT RESOLUTION NEEDED
+
+Der Branch "%s" soll in "%s" gemergt werden, aber es gibt Konflikte.
+
+Deine Aufgabe:
+1. Führe 'git fetch origin' aus
+2. Führe 'git rebase origin/%s' aus
+3. Löse alle Konflikte intelligent - behalte die sinnvollste Kombination beider Versionen
+4. Für jeden Konflikt:
+   - Verstehe was beide Seiten ändern wollten
+   - Kombiniere beide Änderungen wenn möglich
+   - Bei echten Widersprüchen: bevorzuge die Feature-Branch Version
+5. Nach dem Lösen: 'git add .' und 'git rebase --continue'
+6. Wenn erfolgreich: Melde "CONFLICT_RESOLVED" am Ende
+
+Original Task: %s
+%s`, task.WorkingBranch, defaultBranch, defaultBranch, task.Title, task.Description)
+
+	// Update task description temporarily to include conflict resolution instructions
+	originalDesc := task.Description
+	task.Description = conflictPrompt
+
+	// Clear error and set to progress
+	h.db.UpdateTaskError(taskID, "")
+	progressStatus := StatusProgress
+	h.db.UpdateTask(taskID, UpdateTaskRequest{Status: &progressStatus})
+
+	// Get updated task
+	task, _ = h.db.GetTask(taskID)
+	h.hub.BroadcastTaskUpdate(task)
+
+	// Start RALPH to resolve
+	config, _ := h.db.GetConfig()
+	go func() {
+		h.runner.Start(task, config)
+		// Restore original description after RALPH is done
+		h.db.UpdateTask(taskID, UpdateTaskRequest{Description: &originalDesc})
+	}()
+
+	h.writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "resolving",
+		"message": "RALPH is resolving the merge conflict",
 	})
 }

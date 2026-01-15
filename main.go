@@ -95,6 +95,8 @@ func main() {
 			handler.HandleTaskFeedback(w, r) // Feedback an Claude senden
 		} else if strings.HasSuffix(path, "/deploy") {
 			handler.HandleDeployTask(w, r) // Task deployen (commit & push)
+		} else if strings.HasSuffix(path, "/resolve-conflict") {
+			handler.HandleResolveConflict(w, r) // RALPH löst Merge-Konflikt
 		} else {
 			handler.HandleTask(w, r) // Standard GET/PUT/DELETE
 		}

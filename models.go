@@ -116,7 +116,7 @@ type Config struct {
 // WSMessage ist das Format für WebSocket-Nachrichten zwischen Server und Client.
 // Der Type bestimmt, wie die Nachricht vom Client verarbeitet wird.
 type WSMessage struct {
-	Type      string     `json:"type"`                // Nachrichtentyp (log, status, task_updated, etc.)
+	Type      string     `json:"type"`                // Nachrichtentyp (log, status, task_updated, merge_conflict, etc.)
 	TaskID    string     `json:"task_id,omitempty"`   // Zugehörige Task-ID (falls relevant)
 	Message   string     `json:"message,omitempty"`   // Textnachricht (für log, deployment_success)
 	Status    TaskStatus `json:"status,omitempty"`    // Neuer Status (für status-Updates)
@@ -124,6 +124,7 @@ type WSMessage struct {
 	Project   *Project   `json:"project,omitempty"`   // Vollständiges Projekt (für project_updated)
 	Iteration int        `json:"iteration,omitempty"` // Aktuelle Iteration (für status)
 	Branch    string     `json:"branch,omitempty"`    // Branch-Name (für branch_change)
+	Conflict  *MergeConflict `json:"conflict,omitempty"` // Konflikt-Details (für merge_conflict)
 }
 
 // ============================================================================
@@ -261,4 +262,31 @@ type ProjectInfo struct {
 	Path      string `json:"path"`        // Absoluter Pfad
 	Name      string `json:"name"`        // Verzeichnisname
 	IsGitRepo bool   `json:"is_git_repo"` // true = .git existiert
+}
+
+// ============================================================================
+// Merge-Konflikt Types
+// ============================================================================
+
+// MergeConflict enthält Informationen über einen Merge-Konflikt.
+type MergeConflict struct {
+	TaskID        string         `json:"task_id"`        // Betroffener Task
+	WorkingBranch string         `json:"working_branch"` // Branch der gemergt werden soll
+	TargetBranch  string         `json:"target_branch"`  // Ziel-Branch (z.B. main)
+	Files         []ConflictFile `json:"files"`          // Liste der Dateien mit Konflikten
+	Message       string         `json:"message"`        // Beschreibung des Konflikts
+}
+
+// ConflictFile enthält Details zu einer konfliktierenden Datei.
+type ConflictFile struct {
+	Path       string `json:"path"`        // Relativer Pfad zur Datei
+	OursLines  string `json:"ours_lines"`  // Unsere Version (target branch)
+	TheirsLines string `json:"theirs_lines"` // Ihre Version (working branch)
+}
+
+// MergeResult enthält das Ergebnis eines Merge-Versuchs.
+type MergeResult struct {
+	Success  bool           `json:"success"`           // true = Merge erfolgreich
+	Conflict *MergeConflict `json:"conflict,omitempty"` // Konflikt-Details falls !success
+	Message  string         `json:"message"`           // Status-Nachricht
 }

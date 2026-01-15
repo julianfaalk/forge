@@ -517,6 +517,9 @@ $(document).ready(function() {
             case 'deployment_success':
                 showDeploymentSuccess(msg.task_id, msg.message);
                 break;
+            case 'merge_conflict':
+                showMergeConflictModal(msg.conflict);
+                break;
         }
     }
 
@@ -533,6 +536,123 @@ $(document).ready(function() {
             $rocketIcon.addClass('launching');
             setTimeout(() => $rocketIcon.removeClass('launching'), 1500);
         }
+    }
+
+    function showMergeConflictModal(conflict) {
+        if (!conflict) return;
+
+        const task = tasks.find(t => t.id === conflict.task_id);
+        const taskTitle = task ? task.title : 'Task';
+
+        // Build file list
+        let filesHtml = '';
+        if (conflict.files && conflict.files.length > 0) {
+            filesHtml = conflict.files.map(f =>
+                `<div class="conflict-file"><i class="fas fa-file-code"></i> ${f.path}</div>`
+            ).join('');
+        } else {
+            filesHtml = '<div class="conflict-file"><i class="fas fa-question-circle"></i> Konflikt-Dateien konnten nicht ermittelt werden</div>';
+        }
+
+        const modalHtml = `
+            <div class="modal-overlay" id="conflictModal">
+                <div class="modal conflict-modal">
+                    <div class="modal-header">
+                        <h3><i class="fas fa-exclamation-triangle" style="color: #f0ad4e;"></i> Merge-Konflikt</h3>
+                        <button class="close-btn" onclick="$('#conflictModal').remove()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="conflict-message">
+                            Der Branch <code>${conflict.working_branch}</code> kann nicht automatisch in
+                            <code>${conflict.target_branch}</code> gemergt werden.
+                        </p>
+
+                        <div class="conflict-task-info">
+                            <strong>Task:</strong> ${taskTitle}
+                        </div>
+
+                        <div class="conflict-files-section">
+                            <h4><i class="fas fa-folder-open"></i> Betroffene Dateien:</h4>
+                            <div class="conflict-files-list">
+                                ${filesHtml}
+                            </div>
+                        </div>
+
+                        <div class="conflict-actions">
+                            <button class="btn btn-primary btn-resolve-ralph" data-task-id="${conflict.task_id}">
+                                <i class="fas fa-robot"></i> RALPH lösen lassen
+                            </button>
+                            <button class="btn btn-secondary btn-resolve-manual" data-task-id="${conflict.task_id}">
+                                <i class="fas fa-terminal"></i> Manuell lösen
+                            </button>
+                            <button class="btn btn-outline" onclick="$('#conflictModal').remove()">
+                                <i class="fas fa-times"></i> Später
+                            </button>
+                        </div>
+
+                        <div class="conflict-hint">
+                            <i class="fas fa-info-circle"></i>
+                            <span>RALPH wird versuchen, die Konflikte intelligent zu lösen und beide Versionen zu kombinieren.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Remove any existing conflict modal
+        $('#conflictModal').remove();
+
+        // Add modal to body
+        $('body').append(modalHtml);
+
+        // Setup event handlers
+        $('.btn-resolve-ralph').click(function() {
+            const taskId = $(this).data('task-id');
+            resolveConflictWithRalph(taskId);
+            $('#conflictModal').remove();
+        });
+
+        $('.btn-resolve-manual').click(function() {
+            const taskId = $(this).data('task-id');
+            showManualResolveInstructions(conflict);
+        });
+
+        // Play warning sound or show notification
+        showToast('Merge-Konflikt erkannt!', 'warning');
+    }
+
+    function resolveConflictWithRalph(taskId) {
+        showToast('RALPH löst den Konflikt...', 'info');
+
+        $.post(`/api/tasks/${taskId}/resolve-conflict`)
+            .done(function(data) {
+                showToast('RALPH arbeitet am Konflikt', 'success');
+            })
+            .fail(function(xhr) {
+                const error = xhr.responseJSON?.error || 'Unbekannter Fehler';
+                showToast(`Fehler: ${error}`, 'error');
+            });
+    }
+
+    function showManualResolveInstructions(conflict) {
+        const instructions = `
+            <div class="manual-resolve-instructions">
+                <h4>Manuelle Konfliktlösung</h4>
+                <p>Führe folgende Befehle im Terminal aus:</p>
+                <pre><code>cd [project-path]
+git checkout ${conflict.working_branch}
+git fetch origin
+git rebase origin/${conflict.target_branch}
+# Löse die Konflikte in den markierten Dateien
+git add .
+git rebase --continue
+# Wenn erfolgreich, verschiebe den Task erneut nach Done</code></pre>
+            </div>
+        `;
+
+        $('.conflict-modal .modal-body').html(instructions +
+            '<button class="btn btn-outline" onclick="$(\'#conflictModal\').remove()" style="margin-top: 16px;">Schließen</button>'
+        );
     }
 
     function appendLog(taskId, message) {

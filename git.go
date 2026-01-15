@@ -564,56 +564,130 @@ func PushWorkingBranchForReview(path string, workingBranch string, taskTitle str
 	return nil
 }
 
-// MergeWorkingBranchToDefault merges a working branch into the default branch and pushes
-func MergeWorkingBranchToDefault(path string, workingBranch string, taskTitle string) error {
+// GetConflictFiles returns a list of files with merge conflicts
+func GetConflictFiles(path string) ([]ConflictFile, error) {
+	cmd := exec.Command("git", "diff", "--name-only", "--diff-filter=U")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var files []ConflictFile
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		files = append(files, ConflictFile{
+			Path: line,
+		})
+	}
+	return files, nil
+}
+
+// AbortMerge aborts an in-progress merge
+func AbortMerge(path string) error {
+	cmd := exec.Command("git", "merge", "--abort")
+	cmd.Dir = path
+	_, err := cmd.CombinedOutput()
+	return err
+}
+
+// TryMergeWorkingBranch attempts to merge a working branch into the default branch.
+// Returns a MergeResult with conflict details if the merge fails.
+func TryMergeWorkingBranch(path string, workingBranch string, taskID string, taskTitle string) *MergeResult {
 	if !IsGitRepository(path) {
-		return fmt.Errorf("not a git repository: %s", path)
+		return &MergeResult{
+			Success: false,
+			Message: fmt.Sprintf("not a git repository: %s", path),
+		}
 	}
 
 	// Check for uncommitted changes on the working branch
 	hasChanges, err := HasUncommittedChanges(path)
 	if err != nil {
-		return fmt.Errorf("failed to check for uncommitted changes: %v", err)
+		return &MergeResult{
+			Success: false,
+			Message: fmt.Sprintf("failed to check for uncommitted changes: %v", err),
+		}
 	}
 	if hasChanges {
 		// Auto-commit any pending changes with task context
 		commitMsg := fmt.Sprintf("Final changes for: %s", taskTitle)
 		_, err := CommitAllChanges(path, commitMsg)
 		if err != nil {
-			return fmt.Errorf("failed to commit pending changes: %v", err)
+			return &MergeResult{
+				Success: false,
+				Message: fmt.Sprintf("failed to commit pending changes: %v", err),
+			}
 		}
 	}
 
 	// Push working branch to remote first (so the work is saved)
-	if err := PushToRemote(path); err != nil {
-		// Ignore push errors for working branch - might not have remote
-	}
+	PushToRemote(path) // Ignore errors
 
 	// Get the default branch
 	defaultBranch := GetDefaultBranch(path)
 
 	// Checkout default branch
 	if err := CheckoutBranch(path, defaultBranch); err != nil {
-		return fmt.Errorf("failed to checkout %s: %v", defaultBranch, err)
+		return &MergeResult{
+			Success: false,
+			Message: fmt.Sprintf("failed to checkout %s: %v", defaultBranch, err),
+		}
 	}
+
+	// Pull latest changes from remote
+	pullCmd := exec.Command("git", "pull", "--ff-only")
+	pullCmd.Dir = path
+	pullCmd.CombinedOutput() // Ignore errors, might not have remote
 
 	// Create merge commit message with task info
 	mergeMessage := fmt.Sprintf("Merge: %s\n\nMerged from branch: %s", taskTitle, workingBranch)
 
-	// Merge the working branch
+	// Try to merge the working branch
 	if err := MergeBranch(path, workingBranch, mergeMessage); err != nil {
-		// Revert on failure - go back to working branch
+		// Merge failed - check for conflicts
+		conflictFiles, _ := GetConflictFiles(path)
+
+		// Abort the merge to clean up
+		AbortMerge(path)
+
+		// Go back to working branch
 		CheckoutBranch(path, workingBranch)
-		return fmt.Errorf("merge conflict or error: %v", err)
+
+		return &MergeResult{
+			Success: false,
+			Message: "Merge conflict detected",
+			Conflict: &MergeConflict{
+				TaskID:        taskID,
+				WorkingBranch: workingBranch,
+				TargetBranch:  defaultBranch,
+				Files:         conflictFiles,
+				Message:       fmt.Sprintf("Cannot merge '%s' into '%s' due to conflicts", workingBranch, defaultBranch),
+			},
+		}
 	}
 
 	// Push to remote
 	if err := PushToRemote(path); err != nil {
-		return fmt.Errorf("failed to push: %v", err)
+		return &MergeResult{
+			Success: false,
+			Message: fmt.Sprintf("Merge successful but push failed: %v", err),
+		}
 	}
 
 	// Delete the working branch after successful merge
 	DeleteBranch(path, workingBranch)
 
-	return nil
+	// Also delete remote branch
+	deleteRemoteCmd := exec.Command("git", "push", "origin", "--delete", workingBranch)
+	deleteRemoteCmd.Dir = path
+	deleteRemoteCmd.CombinedOutput() // Ignore errors
+
+	return &MergeResult{
+		Success: true,
+		Message: fmt.Sprintf("Successfully merged '%s' into '%s'", workingBranch, defaultBranch),
+	}
 }

@@ -147,6 +147,17 @@ func (h *Hub) BroadcastDeploymentSuccess(taskID string, message string) {
 	h.broadcastJSON(msg)
 }
 
+// BroadcastMergeConflict sends a merge conflict notification
+func (h *Hub) BroadcastMergeConflict(conflict *MergeConflict) {
+	msg := WSMessage{
+		Type:     "merge_conflict",
+		TaskID:   conflict.TaskID,
+		Message:  conflict.Message,
+		Conflict: conflict,
+	}
+	h.broadcastJSON(msg)
+}
+
 func (h *Hub) broadcastJSON(msg WSMessage) {
 	data, err := jsonMarshal(msg)
 	if err != nil {
