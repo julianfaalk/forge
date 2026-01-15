@@ -54,9 +54,23 @@ type Task struct {
 	ConflictPRURL    string `json:"conflict_pr_url,omitempty"`    // GitHub PR URL for conflict resolution
 	ConflictPRNumber int    `json:"conflict_pr_number,omitempty"` // GitHub PR number
 
+	// Attachments - optional screenshots/videos for visual context
+	Attachments []Attachment `json:"attachments,omitempty"` // Liste der Anhänge (Bilder/Videos)
+
 	// Berechnete Felder für API-Responses (nicht in DB gespeichert)
 	TaskType *TaskType `json:"task_type,omitempty"` // Task-Typ-Details (bei JOIN)
 	Project  *Project  `json:"project,omitempty"`   // Projekt-Details (bei JOIN)
+}
+
+// Attachment repräsentiert einen Dateianhang (Screenshot/Video) zu einem Task.
+type Attachment struct {
+	ID        string    `json:"id"`         // Eindeutige UUID
+	TaskID    string    `json:"task_id"`    // Verknüpfter Task
+	Filename  string    `json:"filename"`   // Originaler Dateiname
+	MimeType  string    `json:"mime_type"`  // MIME-Typ (image/png, video/mp4, etc.)
+	Size      int64     `json:"size"`       // Dateigröße in Bytes
+	Path      string    `json:"path"`       // Relativer Pfad zur Datei
+	CreatedAt time.Time `json:"created_at"` // Erstellungszeitpunkt
 }
 
 // Project repräsentiert ein Code-Projekt/Repository.

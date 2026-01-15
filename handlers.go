@@ -1577,22 +1577,33 @@ func (h *Handler) HandleCreatePR(w http.ResponseWriter, r *http.Request) {
 	fromBranch := strings.TrimPrefix(req.FromBranch, "origin/")
 	toBranch := strings.TrimPrefix(req.ToBranch, "origin/")
 
-	// Check for uncommitted changes only if the fromBranch is the current branch
-	// (uncommitted changes don't affect PRs from other branches)
-	currentBranch, _ := GetCurrentBranch(project.Path)
-	if currentBranch == fromBranch {
-		hasUncommitted, err := HasUncommittedChanges(project.Path)
-		if err != nil {
-			log.Printf("[CreatePR] Error checking uncommitted changes: %v", err)
+	// Check if there are commits to merge
+	commitsAhead, commitErr := GetCommitsAhead(project.Path, fromBranch, toBranch)
+	if commitErr != nil {
+		log.Printf("[CreatePR] Error checking commits ahead: %v", commitErr)
+	}
+
+	// If no commits ahead, check why - uncommitted changes or truly nothing to merge
+	if commitsAhead == 0 {
+		currentBranch, _ := GetCurrentBranch(project.Path)
+		if currentBranch == fromBranch {
+			hasUncommitted, _ := HasUncommittedChanges(project.Path)
+			if hasUncommitted {
+				h.writeJSON(w, http.StatusOK, CreatePRResponse{
+					Success:   false,
+					Error:     "You have uncommitted changes. Please commit your changes before creating a PR.",
+					ErrorType: "uncommitted",
+				})
+				return
+			}
 		}
-		if hasUncommitted {
-			h.writeJSON(w, http.StatusOK, CreatePRResponse{
-				Success:   false,
-				Error:     "You have uncommitted changes. Please commit your changes before creating a PR.",
-				ErrorType: "uncommitted",
-			})
-			return
-		}
+		// No commits and no uncommitted changes
+		h.writeJSON(w, http.StatusOK, CreatePRResponse{
+			Success:   false,
+			Error:     "No commits to merge. The source branch has no new commits compared to the target branch.",
+			ErrorType: "identical",
+		})
+		return
 	}
 
 	// Get remote URL
