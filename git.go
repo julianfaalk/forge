@@ -413,9 +413,14 @@ func BranchExists(path string, branchName string) bool {
 	return false
 }
 
-// MergeBranch merges a source branch into the current branch
-func MergeBranch(path string, sourceBranch string) error {
-	cmd := exec.Command("git", "merge", sourceBranch, "--no-edit")
+// MergeBranch merges a source branch into the current branch with a custom message
+func MergeBranch(path string, sourceBranch string, message string) error {
+	var cmd *exec.Cmd
+	if message != "" {
+		cmd = exec.Command("git", "merge", sourceBranch, "-m", message)
+	} else {
+		cmd = exec.Command("git", "merge", sourceBranch, "--no-edit")
+	}
 	cmd.Dir = path
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -520,10 +525,21 @@ func CreateWorkingBranch(path string, taskID string, taskTitle string) (string, 
 	return branchName, nil
 }
 
-// MergeWorkingBranchToDefault merges a working branch into the default branch and pushes
-func MergeWorkingBranchToDefault(path string, workingBranch string) error {
+// PushWorkingBranchForReview commits any changes and pushes the working branch for review
+func PushWorkingBranchForReview(path string, workingBranch string, taskTitle string) error {
 	if !IsGitRepository(path) {
 		return fmt.Errorf("not a git repository: %s", path)
+	}
+
+	// Make sure we're on the working branch
+	currentBranch, err := GetCurrentBranch(path)
+	if err != nil {
+		return fmt.Errorf("failed to get current branch: %v", err)
+	}
+	if currentBranch != workingBranch {
+		if err := CheckoutBranch(path, workingBranch); err != nil {
+			return fmt.Errorf("failed to checkout working branch: %v", err)
+		}
 	}
 
 	// Check for uncommitted changes
@@ -532,11 +548,45 @@ func MergeWorkingBranchToDefault(path string, workingBranch string) error {
 		return fmt.Errorf("failed to check for uncommitted changes: %v", err)
 	}
 	if hasChanges {
-		// Auto-commit any pending changes
-		_, err := CommitAllChanges(path, "Auto-commit before merge")
+		// Commit changes with task context
+		commitMsg := fmt.Sprintf("WIP: %s - ready for review", taskTitle)
+		_, err := CommitAllChanges(path, commitMsg)
+		if err != nil {
+			return fmt.Errorf("failed to commit changes: %v", err)
+		}
+	}
+
+	// Push working branch to remote
+	if err := PushToRemote(path); err != nil {
+		return fmt.Errorf("failed to push branch: %v", err)
+	}
+
+	return nil
+}
+
+// MergeWorkingBranchToDefault merges a working branch into the default branch and pushes
+func MergeWorkingBranchToDefault(path string, workingBranch string, taskTitle string) error {
+	if !IsGitRepository(path) {
+		return fmt.Errorf("not a git repository: %s", path)
+	}
+
+	// Check for uncommitted changes on the working branch
+	hasChanges, err := HasUncommittedChanges(path)
+	if err != nil {
+		return fmt.Errorf("failed to check for uncommitted changes: %v", err)
+	}
+	if hasChanges {
+		// Auto-commit any pending changes with task context
+		commitMsg := fmt.Sprintf("Final changes for: %s", taskTitle)
+		_, err := CommitAllChanges(path, commitMsg)
 		if err != nil {
 			return fmt.Errorf("failed to commit pending changes: %v", err)
 		}
+	}
+
+	// Push working branch to remote first (so the work is saved)
+	if err := PushToRemote(path); err != nil {
+		// Ignore push errors for working branch - might not have remote
 	}
 
 	// Get the default branch
@@ -547,8 +597,11 @@ func MergeWorkingBranchToDefault(path string, workingBranch string) error {
 		return fmt.Errorf("failed to checkout %s: %v", defaultBranch, err)
 	}
 
+	// Create merge commit message with task info
+	mergeMessage := fmt.Sprintf("Merge: %s\n\nMerged from branch: %s", taskTitle, workingBranch)
+
 	// Merge the working branch
-	if err := MergeBranch(path, workingBranch); err != nil {
+	if err := MergeBranch(path, workingBranch, mergeMessage); err != nil {
 		// Revert on failure - go back to working branch
 		CheckoutBranch(path, workingBranch)
 		return fmt.Errorf("merge conflict or error: %v", err)
@@ -559,8 +612,8 @@ func MergeWorkingBranchToDefault(path string, workingBranch string) error {
 		return fmt.Errorf("failed to push: %v", err)
 	}
 
-	// Optionally delete the working branch (we'll keep it for now)
-	// DeleteBranch(path, workingBranch)
+	// Delete the working branch after successful merge
+	DeleteBranch(path, workingBranch)
 
 	return nil
 }

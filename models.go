@@ -1,117 +1,149 @@
+// models.go definiert alle Datenmodelle für GRINDER.
+// Diese Strukturen werden sowohl für die Datenbank als auch für die JSON-API verwendet.
 package main
 
 import (
 	"time"
 )
 
-// TaskStatus represents the status of a task
+// ============================================================================
+// Task-Status Definitionen
+// ============================================================================
+
+// TaskStatus repräsentiert den aktuellen Zustand eines Tasks im Kanban-Board.
+// Der Workflow ist: backlog -> progress -> review -> done
+// Bei Fehlern wird der Status auf "blocked" gesetzt.
 type TaskStatus string
 
 const (
-	StatusBacklog  TaskStatus = "backlog"
-	StatusProgress TaskStatus = "progress"
-	StatusReview   TaskStatus = "review"
-	StatusDone     TaskStatus = "done"
-	StatusBlocked  TaskStatus = "blocked"
+	StatusBacklog  TaskStatus = "backlog"  // Task ist geplant, aber nicht gestartet
+	StatusProgress TaskStatus = "progress" // Task wird von RALPH bearbeitet
+	StatusReview   TaskStatus = "review"   // RALPH ist fertig, wartet auf Überprüfung
+	StatusDone     TaskStatus = "done"     // Task ist abgeschlossen und deployed
+	StatusBlocked  TaskStatus = "blocked"  // Fehler oder blockiert (z.B. max. Iterationen erreicht)
 )
 
-// Task represents a work item in GRINDER
+// ============================================================================
+// Kern-Datenmodelle
+// ============================================================================
+
+// Task repräsentiert eine Arbeitseinheit in GRINDER.
+// Ein Task enthält alle Informationen, die RALPH (Claude) benötigt,
+// um die Aufgabe autonom zu bearbeiten.
 type Task struct {
-	ID                 string     `json:"id"`
-	Title              string     `json:"title"`
-	Description        string     `json:"description"`
-	AcceptanceCriteria string     `json:"acceptance_criteria"`
-	Status             TaskStatus `json:"status"`
-	Priority           int        `json:"priority"` // 1 = high, 2 = medium, 3 = low
-	CurrentIteration   int        `json:"current_iteration"`
-	MaxIterations      int        `json:"max_iterations"`
-	Logs               string     `json:"logs"`
-	Error              string     `json:"error"`
-	ProjectDir         string     `json:"project_dir"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	// New fields for v2
-	ProjectID     string    `json:"project_id,omitempty"`
-	TaskTypeID    string    `json:"task_type_id,omitempty"`
-	WorkingBranch string    `json:"working_branch,omitempty"`
-	// Computed fields for API responses (not stored in DB)
-	TaskType *TaskType `json:"task_type,omitempty"`
-	Project  *Project  `json:"project,omitempty"`
+	ID                 string     `json:"id"`                  // Eindeutige UUID
+	Title              string     `json:"title"`               // Kurzer Titel der Aufgabe
+	Description        string     `json:"description"`         // Ausführliche Beschreibung (Markdown)
+	AcceptanceCriteria string     `json:"acceptance_criteria"` // Kriterien für Task-Abschluss
+	Status             TaskStatus `json:"status"`              // Aktueller Status im Workflow
+	Priority           int        `json:"priority"`            // 1 = hoch, 2 = mittel, 3 = niedrig
+	CurrentIteration   int        `json:"current_iteration"`   // Aktuelle RALPH-Iteration
+	MaxIterations      int        `json:"max_iterations"`      // Maximale Iterationen bevor "blocked"
+	Logs               string     `json:"logs"`                // Gesammelte Ausgaben von RALPH
+	Error              string     `json:"error"`               // Fehlermeldung falls blockiert
+	ProjectDir         string     `json:"project_dir"`         // Arbeitsverzeichnis für RALPH
+	CreatedAt          time.Time  `json:"created_at"`          // Erstellungszeitpunkt
+	UpdatedAt          time.Time  `json:"updated_at"`          // Letztes Update
+
+	// Neue Felder für v2 - Verknüpfungen zu anderen Entitäten
+	ProjectID     string `json:"project_id,omitempty"`     // Verknüpftes Projekt
+	TaskTypeID    string `json:"task_type_id,omitempty"`   // Verknüpfter Task-Typ
+	WorkingBranch string `json:"working_branch,omitempty"` // Aktueller Git-Branch
+
+	// Berechnete Felder für API-Responses (nicht in DB gespeichert)
+	TaskType *TaskType `json:"task_type,omitempty"` // Task-Typ-Details (bei JOIN)
+	Project  *Project  `json:"project,omitempty"`   // Projekt-Details (bei JOIN)
 }
 
-// Project represents a code project/repository
+// Project repräsentiert ein Code-Projekt/Repository.
+// Projekte können automatisch erkannt oder manuell hinzugefügt werden.
 type Project struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	Path           string    `json:"path"`
-	Description    string    `json:"description"`
-	IsAutoDetected bool      `json:"is_auto_detected"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	// Computed fields (not stored in DB)
-	CurrentBranch string `json:"current_branch,omitempty"`
-	IsGitRepo     bool   `json:"is_git_repo"`
-	TaskCount     int    `json:"task_count,omitempty"`
+	ID             string    `json:"id"`               // Eindeutige UUID
+	Name           string    `json:"name"`             // Anzeigename des Projekts
+	Path           string    `json:"path"`             // Absoluter Pfad zum Projektverzeichnis
+	Description    string    `json:"description"`      // Optionale Beschreibung
+	IsAutoDetected bool      `json:"is_auto_detected"` // true = durch Scan gefunden
+	CreatedAt      time.Time `json:"created_at"`       // Erstellungszeitpunkt
+	UpdatedAt      time.Time `json:"updated_at"`       // Letztes Update
+
+	// Berechnete Felder (nicht in DB gespeichert, zur Laufzeit ermittelt)
+	CurrentBranch string `json:"current_branch,omitempty"` // Aktuell ausgecheckter Branch
+	IsGitRepo     bool   `json:"is_git_repo"`              // true = .git Verzeichnis existiert
+	TaskCount     int    `json:"task_count,omitempty"`     // Anzahl verknüpfter Tasks
 }
 
-// BranchProtectionRule defines branches Claude should never push to
+// BranchProtectionRule definiert Branches, auf die RALPH niemals pushen darf.
+// Unterstützt Glob-Pattern wie "release/*" oder exakte Namen wie "main".
 type BranchProtectionRule struct {
-	ID            string    `json:"id"`
-	ProjectID     string    `json:"project_id"`
-	BranchPattern string    `json:"branch_pattern"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            string    `json:"id"`             // Eindeutige UUID
+	ProjectID     string    `json:"project_id"`     // Zugehöriges Projekt
+	BranchPattern string    `json:"branch_pattern"` // Pattern (z.B. "main", "release/*")
+	CreatedAt     time.Time `json:"created_at"`     // Erstellungszeitpunkt
 }
 
-// TaskType defines a type of task with associated color
+// TaskType definiert einen Typ/Kategorie von Tasks mit zugehöriger Farbe.
+// System-Typen (Feature, Bug, Refactor, Test) können nicht gelöscht werden.
 type TaskType struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Color     string    `json:"color"`
-	IsSystem  bool      `json:"is_system"`
+	ID        string    `json:"id"`        // Eindeutige UUID oder system-ID
+	Name      string    `json:"name"`      // Anzeigename (z.B. "Feature")
+	Color     string    `json:"color"`     // Hex-Farbe für Badge (z.B. "#3fb950")
+	IsSystem  bool      `json:"is_system"` // true = vordefiniert, nicht löschbar
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Config represents global configuration settings
+// Config repräsentiert die globalen Konfigurationseinstellungen.
+// Es existiert nur ein Config-Datensatz in der Datenbank (id = 1).
 type Config struct {
-	ID                   int    `json:"id"`
-	DefaultProjectDir    string `json:"default_project_dir"`
-	DefaultMaxIterations int    `json:"default_max_iterations"`
-	ClaudeCommand        string `json:"claude_command"`
-	ProjectsBaseDir      string `json:"projects_base_dir"`
-	GithubToken          string `json:"github_token,omitempty"`
-	// New settings fields
-	AutoCommit      bool   `json:"auto_commit"`
-	AutoPush        bool   `json:"auto_push"`
-	DefaultBranch   string `json:"default_branch"`
-	DefaultPriority int    `json:"default_priority"`
-	AutoArchiveDays int    `json:"auto_archive_days"`
+	ID                   int    `json:"id"`                    // Immer 1
+	DefaultProjectDir    string `json:"default_project_dir"`   // Standard-Projektverzeichnis
+	DefaultMaxIterations int    `json:"default_max_iterations"`// Standard für max. Iterationen
+	ClaudeCommand        string `json:"claude_command"`        // Pfad zum Claude CLI
+	ProjectsBaseDir      string `json:"projects_base_dir"`     // Basis-Verzeichnis für Projekt-Scan
+	GithubToken          string `json:"github_token,omitempty"`// GitHub Personal Access Token
+
+	// Erweiterte Einstellungen
+	AutoCommit      bool   `json:"auto_commit"`      // Auto-Commit bei Task-Abschluss
+	AutoPush        bool   `json:"auto_push"`        // Auto-Push nach Commit
+	DefaultBranch   string `json:"default_branch"`   // Standard-Branch (z.B. "main")
+	DefaultPriority int    `json:"default_priority"` // Standard-Priorität für neue Tasks
+	AutoArchiveDays int    `json:"auto_archive_days"`// Tage bis Auto-Archivierung (0 = deaktiviert)
 }
 
-// WebSocket message types
+// ============================================================================
+// WebSocket-Nachrichten
+// ============================================================================
+
+// WSMessage ist das Format für WebSocket-Nachrichten zwischen Server und Client.
+// Der Type bestimmt, wie die Nachricht vom Client verarbeitet wird.
 type WSMessage struct {
-	Type      string     `json:"type"`
-	TaskID    string     `json:"task_id,omitempty"`
-	Message   string     `json:"message,omitempty"`
-	Status    TaskStatus `json:"status,omitempty"`
-	Task      *Task      `json:"task,omitempty"`
-	Project   *Project   `json:"project,omitempty"`
-	Iteration int        `json:"iteration,omitempty"`
-	Branch    string     `json:"branch,omitempty"`
+	Type      string     `json:"type"`                // Nachrichtentyp (log, status, task_updated, etc.)
+	TaskID    string     `json:"task_id,omitempty"`   // Zugehörige Task-ID (falls relevant)
+	Message   string     `json:"message,omitempty"`   // Textnachricht (für log, deployment_success)
+	Status    TaskStatus `json:"status,omitempty"`    // Neuer Status (für status-Updates)
+	Task      *Task      `json:"task,omitempty"`      // Vollständiger Task (für task_updated)
+	Project   *Project   `json:"project,omitempty"`   // Vollständiges Projekt (für project_updated)
+	Iteration int        `json:"iteration,omitempty"` // Aktuelle Iteration (für status)
+	Branch    string     `json:"branch,omitempty"`    // Branch-Name (für branch_change)
 }
 
-// API request/response types
+// ============================================================================
+// API Request/Response Types - Task
+// ============================================================================
 
+// CreateTaskRequest ist der Request-Body zum Erstellen eines neuen Tasks.
 type CreateTaskRequest struct {
-	Title              string `json:"title"`
-	Description        string `json:"description"`
-	AcceptanceCriteria string `json:"acceptance_criteria"`
-	Priority           int    `json:"priority"`
-	MaxIterations      int    `json:"max_iterations"`
-	ProjectDir         string `json:"project_dir"`
-	ProjectID          string `json:"project_id"`
-	TaskTypeID         string `json:"task_type_id"`
+	Title              string `json:"title"`              // Pflichtfeld: Titel
+	Description        string `json:"description"`        // Optional: Beschreibung
+	AcceptanceCriteria string `json:"acceptance_criteria"`// Optional: Akzeptanzkriterien
+	Priority           int    `json:"priority"`           // 1-3, Standard: 2
+	MaxIterations      int    `json:"max_iterations"`     // Standard aus Config
+	ProjectDir         string `json:"project_dir"`        // Optional, sonst aus Projekt oder Config
+	ProjectID          string `json:"project_id"`         // Optional: Projekt-Verknüpfung
+	TaskTypeID         string `json:"task_type_id"`       // Optional: Task-Typ
 }
 
+// UpdateTaskRequest ist der Request-Body zum Aktualisieren eines Tasks.
+// Alle Felder sind optional - nur gesetzte Felder werden aktualisiert.
 type UpdateTaskRequest struct {
 	Title              *string     `json:"title,omitempty"`
 	Description        *string     `json:"description,omitempty"`
@@ -125,17 +157,25 @@ type UpdateTaskRequest struct {
 	WorkingBranch      *string     `json:"working_branch,omitempty"`
 }
 
+// FeedbackRequest ist der Request-Body für Feedback an einen laufenden Task.
 type FeedbackRequest struct {
-	Message string `json:"message"`
+	Message string `json:"message"` // Feedback-Text für Claude
 }
 
+// ============================================================================
+// API Request/Response Types - Config
+// ============================================================================
+
+// UpdateConfigRequest ist der Request-Body zum Aktualisieren der Konfiguration.
+// Alle Felder sind optional - nur gesetzte Felder werden aktualisiert.
 type UpdateConfigRequest struct {
 	DefaultProjectDir    *string `json:"default_project_dir,omitempty"`
 	DefaultMaxIterations *int    `json:"default_max_iterations,omitempty"`
 	ClaudeCommand        *string `json:"claude_command,omitempty"`
 	ProjectsBaseDir      *string `json:"projects_base_dir,omitempty"`
 	GithubToken          *string `json:"github_token,omitempty"`
-	// New settings fields
+
+	// Erweiterte Einstellungen
 	AutoCommit      *bool   `json:"auto_commit,omitempty"`
 	AutoPush        *bool   `json:"auto_push,omitempty"`
 	DefaultBranch   *string `json:"default_branch,omitempty"`
@@ -143,64 +183,82 @@ type UpdateConfigRequest struct {
 	AutoArchiveDays *int    `json:"auto_archive_days,omitempty"`
 }
 
-// Project request types
+// ============================================================================
+// API Request/Response Types - Project
+// ============================================================================
 
+// CreateProjectRequest ist der Request-Body zum Erstellen eines neuen Projekts.
 type CreateProjectRequest struct {
-	Name        string `json:"name"`
-	Path        string `json:"path"`
-	Description string `json:"description"`
+	Name        string `json:"name"`        // Pflichtfeld: Anzeigename
+	Path        string `json:"path"`        // Pflichtfeld: Absoluter Pfad
+	Description string `json:"description"` // Optional: Beschreibung
 }
 
+// UpdateProjectRequest ist der Request-Body zum Aktualisieren eines Projekts.
 type UpdateProjectRequest struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
 }
 
+// ScanProjectsRequest ist der Request-Body zum Scannen nach Projekten.
 type ScanProjectsRequest struct {
-	BasePath string `json:"base_path"`
-	MaxDepth int    `json:"max_depth"`
+	BasePath string `json:"base_path"` // Startverzeichnis für Scan
+	MaxDepth int    `json:"max_depth"` // Maximale Suchtiefe (Standard: 3)
 }
 
-// Task type request types
+// ============================================================================
+// API Request/Response Types - Task Type
+// ============================================================================
 
+// CreateTaskTypeRequest ist der Request-Body zum Erstellen eines Task-Typs.
 type CreateTaskTypeRequest struct {
-	Name  string `json:"name"`
-	Color string `json:"color"`
+	Name  string `json:"name"`  // Pflichtfeld: Name (z.B. "Feature")
+	Color string `json:"color"` // Hex-Farbe (z.B. "#3fb950")
 }
 
+// UpdateTaskTypeRequest ist der Request-Body zum Aktualisieren eines Task-Typs.
 type UpdateTaskTypeRequest struct {
 	Name  *string `json:"name,omitempty"`
 	Color *string `json:"color,omitempty"`
 }
 
-// Branch protection request types
+// ============================================================================
+// API Request/Response Types - Branch Protection
+// ============================================================================
 
+// CreateBranchRuleRequest ist der Request-Body zum Erstellen einer Branch-Regel.
 type CreateBranchRuleRequest struct {
-	BranchPattern string `json:"branch_pattern"`
+	BranchPattern string `json:"branch_pattern"` // Pattern (z.B. "main", "release/*")
 }
 
-// GitHub request/response types
+// ============================================================================
+// API Request/Response Types - GitHub
+// ============================================================================
 
+// CreateGithubRepoRequest ist der Request-Body zum Erstellen eines GitHub-Repos.
 type CreateGithubRepoRequest struct {
-	RepoName    string `json:"repo_name"`
-	Description string `json:"description"`
-	Private     bool   `json:"private"`
+	RepoName    string `json:"repo_name"`    // Repository-Name (optional, sonst Projektname)
+	Description string `json:"description"`  // Optional: Repo-Beschreibung
+	Private     bool   `json:"private"`      // true = privates Repository
 }
 
+// DeploymentRequest ist der Request-Body für Task-Deployment.
 type DeploymentRequest struct {
-	CommitMessage string `json:"commit_message,omitempty"`
+	CommitMessage string `json:"commit_message,omitempty"` // Optional: Commit-Nachricht
 }
 
+// DeploymentResponse ist die Response nach erfolgreichem Deployment.
 type DeploymentResponse struct {
-	Success      bool   `json:"success"`
-	CommitHash   string `json:"commit_hash,omitempty"`
-	PushURL      string `json:"push_url,omitempty"`
-	ErrorMessage string `json:"error_message,omitempty"`
+	Success      bool   `json:"success"`                 // true = erfolgreich
+	CommitHash   string `json:"commit_hash,omitempty"`   // SHA des Commits
+	PushURL      string `json:"push_url,omitempty"`      // Remote-URL
+	ErrorMessage string `json:"error_message,omitempty"` // Fehlermeldung falls !success
 }
 
-// ProjectInfo holds information about a detected project (git or non-git)
+// ProjectInfo enthält Informationen über ein erkanntes Projekt (Git oder nicht-Git).
+// Wird beim Projekt-Scan verwendet.
 type ProjectInfo struct {
-	Path      string `json:"path"`
-	Name      string `json:"name"`
-	IsGitRepo bool   `json:"is_git_repo"`
+	Path      string `json:"path"`        // Absoluter Pfad
+	Name      string `json:"name"`        // Verzeichnisname
+	IsGitRepo bool   `json:"is_git_repo"` // true = .git existiert
 }

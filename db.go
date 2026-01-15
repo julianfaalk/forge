@@ -1,3 +1,6 @@
+// db.go implementiert die Datenbankschicht für GRINDER.
+// Verwendet SQLite mit WAL-Modus für bessere Concurrent-Performance.
+// Alle Datenbankoperationen sind thread-safe durch einen RWMutex.
 package main
 
 import (
@@ -7,16 +10,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // SQLite-Treiber
 )
 
-// Database wraps the SQL database with a mutex for thread safety
+// Database kapselt die SQL-Datenbankverbindung mit einem Mutex für Thread-Sicherheit.
+// Lesende Operationen verwenden RLock, schreibende Operationen Lock.
 type Database struct {
 	db *sql.DB
 	mu sync.RWMutex
 }
 
-// NewDatabase creates a new database connection and initializes the schema
+// NewDatabase erstellt eine neue Datenbankverbindung und initialisiert das Schema.
+// Verwendet WAL-Modus (Write-Ahead-Logging) für bessere Performance bei gleichzeitigen Zugriffen.
+// Der Busy-Timeout von 5 Sekunden verhindert "database is locked" Fehler.
 func NewDatabase(path string) (*Database, error) {
 	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
@@ -24,11 +30,14 @@ func NewDatabase(path string) (*Database, error) {
 	}
 
 	database := &Database{db: db}
+
+	// Schema initialisieren (erstellt Tabellen falls nicht vorhanden)
 	if err := database.initSchema(); err != nil {
 		db.Close()
 		return nil, err
 	}
 
+	// Migrationen ausführen (fügt neue Spalten/Tabellen hinzu)
 	if err := database.runMigrations(); err != nil {
 		db.Close()
 		return nil, err
@@ -37,18 +46,21 @@ func NewDatabase(path string) (*Database, error) {
 	return database, nil
 }
 
-// Close closes the database connection
+// Close schließt die Datenbankverbindung.
 func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-// initSchema creates the database tables if they don't exist
+// initSchema erstellt die initialen Datenbanktabellen.
+// Wird beim Start ausgeführt - existierende Tabellen werden nicht überschrieben.
 func (d *Database) initSchema() error {
 	schema := `
+	-- Versionstabelle für Schema-Migrationen
 	CREATE TABLE IF NOT EXISTS schema_version (
 		version INTEGER PRIMARY KEY
 	);
 
+	-- Tasks: Kernentität für Arbeitsaufgaben
 	CREATE TABLE IF NOT EXISTS tasks (
 		id TEXT PRIMARY KEY,
 		title TEXT NOT NULL,
@@ -65,6 +77,7 @@ func (d *Database) initSchema() error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	-- Config: Globale Konfiguration (nur ein Datensatz mit id=1)
 	CREATE TABLE IF NOT EXISTS config (
 		id INTEGER PRIMARY KEY CHECK (id = 1),
 		default_project_dir TEXT DEFAULT '',
@@ -72,6 +85,7 @@ func (d *Database) initSchema() error {
 		claude_command TEXT DEFAULT 'claude'
 	);
 
+	-- Standard-Konfiguration erstellen falls nicht vorhanden
 	INSERT OR IGNORE INTO config (id, default_project_dir, default_max_iterations, claude_command)
 	VALUES (1, '', 10, 'claude');
 	`
@@ -80,9 +94,10 @@ func (d *Database) initSchema() error {
 	return err
 }
 
-// runMigrations runs all pending database migrations
+// runMigrations führt alle ausstehenden Datenbank-Migrationen aus.
+// Jede Migration hat eine Versionsnummer - nur höhere Versionen werden ausgeführt.
 func (d *Database) runMigrations() error {
-	// Get current version
+	// Aktuelle Schema-Version ermitteln
 	var version int
 	err := d.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version)
 	if err != nil {
@@ -91,11 +106,11 @@ func (d *Database) runMigrations() error {
 
 	log.Printf("Current schema version: %d", version)
 
-	// Migration 1: Add projects, task_types, branch_protection_rules tables
+	// ========== Migration 1: Projekte, Task-Typen und Branch-Schutz ==========
 	if version < 1 {
 		log.Println("Running migration 1: Adding projects, task types, and branch protection")
 		migration1 := `
-		-- Projects table
+		-- Projekte: Code-Repositories/Projekte
 		CREATE TABLE IF NOT EXISTS projects (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -106,7 +121,7 @@ func (d *Database) runMigrations() error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
-		-- Task types table
+		-- Task-Typen: Kategorien für Tasks (Feature, Bug, etc.)
 		CREATE TABLE IF NOT EXISTS task_types (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL UNIQUE,
@@ -115,7 +130,7 @@ func (d *Database) runMigrations() error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
-		-- Branch protection rules table
+		-- Branch-Schutzregeln: Definiert geschützte Branches pro Projekt
 		CREATE TABLE IF NOT EXISTS branch_protection_rules (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
@@ -125,7 +140,7 @@ func (d *Database) runMigrations() error {
 			UNIQUE(project_id, branch_pattern)
 		);
 
-		-- Insert default task types
+		-- Standard Task-Typen einfügen
 		INSERT OR IGNORE INTO task_types (id, name, color, is_system, created_at) VALUES
 			('type-feature', 'Feature', '#3fb950', 1, CURRENT_TIMESTAMP),
 			('type-bug', 'Bug', '#f85149', 1, CURRENT_TIMESTAMP),
@@ -140,31 +155,30 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 1 completed")
 	}
 
-	// Migration 2: Add new columns to tasks and config
+	// ========== Migration 2: Neue Spalten für Tasks und Config ==========
 	if version < 2 {
 		log.Println("Running migration 2: Adding new columns to tasks and config")
 
-		// Check if columns exist before adding
 		migration2 := `
 		INSERT INTO schema_version (version) VALUES (2);
 		`
 
-		// Add columns individually to handle existing columns
+		// Spalten einzeln hinzufügen (ignoriert Fehler wenn Spalte bereits existiert)
 		columns := []struct {
 			table  string
 			column string
 			def    string
 		}{
-			{"tasks", "project_id", "TEXT DEFAULT ''"},
-			{"tasks", "task_type_id", "TEXT DEFAULT ''"},
-			{"tasks", "working_branch", "TEXT DEFAULT ''"},
-			{"config", "projects_base_dir", "TEXT DEFAULT ''"},
+			{"tasks", "project_id", "TEXT DEFAULT ''"},       // Verknüpfung zu Projekt
+			{"tasks", "task_type_id", "TEXT DEFAULT ''"},     // Verknüpfung zu Task-Typ
+			{"tasks", "working_branch", "TEXT DEFAULT ''"},   // Aktueller Git-Branch
+			{"config", "projects_base_dir", "TEXT DEFAULT ''"}, // Scan-Basis-Verzeichnis
 		}
 
 		for _, col := range columns {
 			query := "ALTER TABLE " + col.table + " ADD COLUMN " + col.column + " " + col.def
 			if _, err := d.db.Exec(query); err != nil {
-				// Ignore error if column already exists
+				// Fehler ignorieren wenn Spalte bereits existiert
 				log.Printf("Note: Column %s.%s may already exist: %v", col.table, col.column, err)
 			}
 		}
@@ -175,7 +189,7 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 2 completed")
 	}
 
-	// Migration 3: Add github_token to config
+	// ========== Migration 3: GitHub-Token ==========
 	if version < 3 {
 		log.Println("Running migration 3: Adding github_token to config")
 		_, err := d.db.Exec("ALTER TABLE config ADD COLUMN github_token TEXT DEFAULT ''")
@@ -189,7 +203,7 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 3 completed")
 	}
 
-	// Migration 4: Add new settings fields to config
+	// ========== Migration 4: Erweiterte Einstellungen ==========
 	if version < 4 {
 		log.Println("Running migration 4: Adding new settings fields to config")
 
@@ -197,11 +211,11 @@ func (d *Database) runMigrations() error {
 			name string
 			def  string
 		}{
-			{"auto_commit", "INTEGER DEFAULT 0"},
-			{"auto_push", "INTEGER DEFAULT 0"},
-			{"default_branch", "TEXT DEFAULT 'main'"},
-			{"default_priority", "INTEGER DEFAULT 2"},
-			{"auto_archive_days", "INTEGER DEFAULT 0"},
+			{"auto_commit", "INTEGER DEFAULT 0"},       // Auto-Commit bei Task-Abschluss
+			{"auto_push", "INTEGER DEFAULT 0"},         // Auto-Push nach Commit
+			{"default_branch", "TEXT DEFAULT 'main'"},  // Standard-Branch
+			{"default_priority", "INTEGER DEFAULT 2"},  // Standard-Priorität
+			{"auto_archive_days", "INTEGER DEFAULT 0"}, // Auto-Archivierung (0 = deaktiviert)
 		}
 
 		for _, col := range newColumns {
@@ -222,10 +236,11 @@ func (d *Database) runMigrations() error {
 }
 
 // ============================================================================
-// Task CRUD operations
+// Task CRUD-Operationen
 // ============================================================================
 
-// GetAllTasks returns all tasks sorted by priority and creation date
+// GetAllTasks gibt alle Tasks zurück, sortiert nach Priorität und Erstellungsdatum.
+// Task-Typ-Informationen werden per LEFT JOIN hinzugefügt.
 func (d *Database) GetAllTasks() ([]Task, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -260,6 +275,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Task-Typ hinzufügen falls vorhanden
 		if ttID.Valid && ttID.String != "" {
 			t.TaskType = &TaskType{
 				ID:       ttID.String,
@@ -274,7 +290,8 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 	return tasks, rows.Err()
 }
 
-// GetTask returns a single task by ID
+// GetTask gibt einen einzelnen Task anhand seiner ID zurück.
+// Gibt nil zurück wenn der Task nicht existiert.
 func (d *Database) GetTask(id string) (*Task, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -315,7 +332,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 	return &t, nil
 }
 
-// GetTasksByProject returns all tasks for a specific project
+// GetTasksByProject gibt alle Tasks für ein bestimmtes Projekt zurück.
 func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -365,7 +382,8 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 	return tasks, rows.Err()
 }
 
-// CreateTask creates a new task
+// CreateTask erstellt einen neuen Task.
+// Wendet Standard-Werte aus der Config an wenn nicht explizit angegeben.
 func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -386,9 +404,9 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		UpdatedAt:          time.Now(),
 	}
 
-	// Apply defaults from config if not specified
+	// Standard-Werte aus Config anwenden
 	if task.Priority == 0 {
-		task.Priority = 2
+		task.Priority = 2 // Mittel
 	}
 	if task.MaxIterations == 0 {
 		task.MaxIterations = config.DefaultMaxIterations
@@ -416,12 +434,13 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 	return task, nil
 }
 
-// UpdateTask updates an existing task
+// UpdateTask aktualisiert einen bestehenden Task.
+// Verwendet Pointer für optionale Felder - nur nicht-nil Felder werden aktualisiert.
 func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// First get the current task
+	// Aktuellen Task laden
 	var t Task
 	err := d.db.QueryRow(`
 		SELECT id, title, description, acceptance_criteria, status, priority,
@@ -442,7 +461,7 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		return nil, err
 	}
 
-	// Apply updates
+	// Updates anwenden (nur wenn Pointer nicht nil)
 	if req.Title != nil {
 		t.Title = *req.Title
 	}
@@ -493,7 +512,7 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 	return &t, nil
 }
 
-// UpdateTaskStatus updates only the status of a task
+// UpdateTaskStatus aktualisiert nur den Status eines Tasks.
 func (d *Database) UpdateTaskStatus(id string, status TaskStatus) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -504,7 +523,7 @@ func (d *Database) UpdateTaskStatus(id string, status TaskStatus) error {
 	return err
 }
 
-// UpdateTaskIteration updates the current iteration of a task
+// UpdateTaskIteration aktualisiert die aktuelle Iteration eines Tasks.
 func (d *Database) UpdateTaskIteration(id string, iteration int) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -515,7 +534,7 @@ func (d *Database) UpdateTaskIteration(id string, iteration int) error {
 	return err
 }
 
-// UpdateTaskWorkingBranch updates the working branch of a task
+// UpdateTaskWorkingBranch aktualisiert den Working-Branch eines Tasks.
 func (d *Database) UpdateTaskWorkingBranch(id string, branch string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -526,7 +545,7 @@ func (d *Database) UpdateTaskWorkingBranch(id string, branch string) error {
 	return err
 }
 
-// UpdateTaskError updates the error message of a task
+// UpdateTaskError aktualisiert die Fehlermeldung eines Tasks.
 func (d *Database) UpdateTaskError(id string, errorMsg string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -537,7 +556,8 @@ func (d *Database) UpdateTaskError(id string, errorMsg string) error {
 	return err
 }
 
-// AppendTaskLogs appends to the task logs
+// AppendTaskLogs fügt Text an die Task-Logs an.
+// Verwendet SQL-String-Konkatenation für Effizienz.
 func (d *Database) AppendTaskLogs(id string, logs string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -548,7 +568,8 @@ func (d *Database) AppendTaskLogs(id string, logs string) error {
 	return err
 }
 
-// ResetTaskForProgress resets a task for a new RALPH run
+// ResetTaskForProgress setzt einen Task für einen neuen RALPH-Lauf zurück.
+// Löscht Logs, Fehler, Iteration und Working-Branch.
 func (d *Database) ResetTaskForProgress(id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -565,7 +586,7 @@ func (d *Database) ResetTaskForProgress(id string) error {
 	return err
 }
 
-// DeleteTask deletes a task by ID
+// DeleteTask löscht einen Task anhand seiner ID.
 func (d *Database) DeleteTask(id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -574,7 +595,8 @@ func (d *Database) DeleteTask(id string) error {
 	return err
 }
 
-// MarkRunningTasksAsBlocked marks all tasks in progress as blocked (used on server restart)
+// MarkRunningTasksAsBlocked markiert alle laufenden Tasks als blockiert.
+// Wird bei Server-Neustart aufgerufen, da die RALPH-Prozesse nicht mehr existieren.
 func (d *Database) MarkRunningTasksAsBlocked(reason string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -590,10 +612,11 @@ func (d *Database) MarkRunningTasksAsBlocked(reason string) error {
 }
 
 // ============================================================================
-// Project CRUD operations
+// Projekt CRUD-Operationen
 // ============================================================================
 
-// GetAllProjects returns all projects
+// GetAllProjects gibt alle Projekte zurück, sortiert nach Name.
+// Ergänzt Git-Informationen (Branch, IsGitRepo) zur Laufzeit.
 func (d *Database) GetAllProjects() ([]Project, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -619,7 +642,7 @@ func (d *Database) GetAllProjects() ([]Project, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Get git info
+		// Git-Informationen zur Laufzeit ermitteln
 		p.IsGitRepo = IsGitRepository(p.Path)
 		if p.IsGitRepo {
 			if branch, err := GetCurrentBranch(p.Path); err == nil {
@@ -632,7 +655,7 @@ func (d *Database) GetAllProjects() ([]Project, error) {
 	return projects, rows.Err()
 }
 
-// GetProject returns a single project by ID
+// GetProject gibt ein einzelnes Projekt anhand seiner ID zurück.
 func (d *Database) GetProject(id string) (*Project, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -653,7 +676,7 @@ func (d *Database) GetProject(id string) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Get git info
+	// Git-Informationen zur Laufzeit ermitteln
 	p.IsGitRepo = IsGitRepository(p.Path)
 	if p.IsGitRepo {
 		if branch, err := GetCurrentBranch(p.Path); err == nil {
@@ -663,7 +686,8 @@ func (d *Database) GetProject(id string) (*Project, error) {
 	return &p, nil
 }
 
-// GetProjectByPath returns a project by its path
+// GetProjectByPath gibt ein Projekt anhand seines Pfads zurück.
+// Wird verwendet um Duplikate beim Projekt-Scan zu vermeiden.
 func (d *Database) GetProjectByPath(path string) (*Project, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -685,7 +709,8 @@ func (d *Database) GetProjectByPath(path string) (*Project, error) {
 	return &p, nil
 }
 
-// CreateProject creates a new project
+// CreateProject erstellt ein neues Projekt.
+// isAutoDetected gibt an, ob das Projekt durch Scan gefunden wurde.
 func (d *Database) CreateProject(req CreateProjectRequest, isAutoDetected bool) (*Project, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -711,7 +736,7 @@ func (d *Database) CreateProject(req CreateProjectRequest, isAutoDetected bool) 
 		return nil, err
 	}
 
-	// Get git info
+	// Git-Informationen zur Laufzeit ermitteln
 	project.IsGitRepo = IsGitRepository(project.Path)
 	if project.IsGitRepo {
 		if branch, err := GetCurrentBranch(project.Path); err == nil {
@@ -722,7 +747,7 @@ func (d *Database) CreateProject(req CreateProjectRequest, isAutoDetected bool) 
 	return project, nil
 }
 
-// UpdateProject updates an existing project
+// UpdateProject aktualisiert ein bestehendes Projekt.
 func (d *Database) UpdateProject(id string, req UpdateProjectRequest) (*Project, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -742,6 +767,7 @@ func (d *Database) UpdateProject(id string, req UpdateProjectRequest) (*Project,
 		return nil, err
 	}
 
+	// Updates anwenden
 	if req.Name != nil {
 		p.Name = *req.Name
 	}
@@ -760,26 +786,28 @@ func (d *Database) UpdateProject(id string, req UpdateProjectRequest) (*Project,
 	return &p, nil
 }
 
-// DeleteProject deletes a project by ID
+// DeleteProject löscht ein Projekt und entfernt die Verknüpfung von allen Tasks.
 func (d *Database) DeleteProject(id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// First clear project_id from tasks
+	// Zuerst project_id von Tasks entfernen
 	_, err := d.db.Exec(`UPDATE tasks SET project_id = '' WHERE project_id = ?`, id)
 	if err != nil {
 		return err
 	}
 
+	// Dann Projekt löschen (Branch-Regeln werden durch CASCADE gelöscht)
 	_, err = d.db.Exec(`DELETE FROM projects WHERE id = ?`, id)
 	return err
 }
 
 // ============================================================================
-// Task Type CRUD operations
+// Task-Typ CRUD-Operationen
 // ============================================================================
 
-// GetAllTaskTypes returns all task types
+// GetAllTaskTypes gibt alle Task-Typen zurück.
+// System-Typen werden zuerst angezeigt, dann benutzerdefinierte nach Name.
 func (d *Database) GetAllTaskTypes() ([]TaskType, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -807,7 +835,7 @@ func (d *Database) GetAllTaskTypes() ([]TaskType, error) {
 	return types, rows.Err()
 }
 
-// GetTaskType returns a single task type by ID
+// GetTaskType gibt einen einzelnen Task-Typ anhand seiner ID zurück.
 func (d *Database) GetTaskType(id string) (*TaskType, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -826,7 +854,7 @@ func (d *Database) GetTaskType(id string) (*TaskType, error) {
 	return &t, nil
 }
 
-// CreateTaskType creates a new task type
+// CreateTaskType erstellt einen neuen benutzerdefinierten Task-Typ.
 func (d *Database) CreateTaskType(req CreateTaskTypeRequest) (*TaskType, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -835,7 +863,7 @@ func (d *Database) CreateTaskType(req CreateTaskTypeRequest) (*TaskType, error) 
 		ID:        uuid.New().String(),
 		Name:      req.Name,
 		Color:     req.Color,
-		IsSystem:  false,
+		IsSystem:  false, // Benutzerdefinierte Typen sind nie System-Typen
 		CreatedAt: time.Now(),
 	}
 
@@ -850,7 +878,7 @@ func (d *Database) CreateTaskType(req CreateTaskTypeRequest) (*TaskType, error) 
 	return taskType, nil
 }
 
-// UpdateTaskType updates an existing task type
+// UpdateTaskType aktualisiert einen bestehenden Task-Typ.
 func (d *Database) UpdateTaskType(id string, req UpdateTaskTypeRequest) (*TaskType, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -867,6 +895,7 @@ func (d *Database) UpdateTaskType(id string, req UpdateTaskTypeRequest) (*TaskTy
 		return nil, err
 	}
 
+	// Updates anwenden
 	if req.Name != nil {
 		t.Name = *req.Name
 	}
@@ -884,22 +913,23 @@ func (d *Database) UpdateTaskType(id string, req UpdateTaskTypeRequest) (*TaskTy
 	return &t, nil
 }
 
-// DeleteTaskType deletes a task type by ID (only non-system types)
+// DeleteTaskType löscht einen benutzerdefinierten Task-Typ.
+// System-Typen können nicht gelöscht werden.
 func (d *Database) DeleteTaskType(id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Check if it's a system type
+	// Prüfen ob es ein System-Typ ist
 	var isSystem bool
 	err := d.db.QueryRow(`SELECT is_system FROM task_types WHERE id = ?`, id).Scan(&isSystem)
 	if err != nil {
 		return err
 	}
 	if isSystem {
-		return sql.ErrNoRows // Can't delete system types
+		return sql.ErrNoRows // System-Typen können nicht gelöscht werden
 	}
 
-	// Clear task_type_id from tasks using this type
+	// task_type_id von Tasks entfernen die diesen Typ verwenden
 	_, err = d.db.Exec(`UPDATE tasks SET task_type_id = '' WHERE task_type_id = ?`, id)
 	if err != nil {
 		return err
@@ -910,10 +940,10 @@ func (d *Database) DeleteTaskType(id string) error {
 }
 
 // ============================================================================
-// Branch Protection Rule CRUD operations
+// Branch-Schutzregel CRUD-Operationen
 // ============================================================================
 
-// GetBranchRules returns all branch protection rules for a project
+// GetBranchRules gibt alle Branch-Schutzregeln für ein Projekt zurück.
 func (d *Database) GetBranchRules(projectID string) ([]BranchProtectionRule, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -942,7 +972,7 @@ func (d *Database) GetBranchRules(projectID string) ([]BranchProtectionRule, err
 	return rules, rows.Err()
 }
 
-// CreateBranchRule creates a new branch protection rule
+// CreateBranchRule erstellt eine neue Branch-Schutzregel.
 func (d *Database) CreateBranchRule(projectID string, pattern string) (*BranchProtectionRule, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -965,7 +995,7 @@ func (d *Database) CreateBranchRule(projectID string, pattern string) (*BranchPr
 	return rule, nil
 }
 
-// DeleteBranchRule deletes a branch protection rule by ID
+// DeleteBranchRule löscht eine Branch-Schutzregel anhand ihrer ID.
 func (d *Database) DeleteBranchRule(id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -975,18 +1005,21 @@ func (d *Database) DeleteBranchRule(id string) error {
 }
 
 // ============================================================================
-// Config operations
+// Konfigurations-Operationen
 // ============================================================================
 
-// GetConfig returns the global configuration
+// GetConfig gibt die globale Konfiguration zurück.
+// Es existiert nur ein Datensatz mit id=1.
 func (d *Database) GetConfig() (*Config, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
 	var c Config
+	// Nullable Felder für optionale Spalten
 	var projectsBaseDir, githubToken, defaultBranch sql.NullString
 	var autoCommit, autoPush sql.NullBool
 	var defaultPriority, autoArchiveDays sql.NullInt64
+
 	err := d.db.QueryRow(`
 		SELECT id, default_project_dir, default_max_iterations, claude_command,
 		       COALESCE(projects_base_dir, ''), COALESCE(github_token, ''),
@@ -1000,6 +1033,8 @@ func (d *Database) GetConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Nullable Werte übertragen
 	if projectsBaseDir.Valid {
 		c.ProjectsBaseDir = projectsBaseDir.String
 	}
@@ -1024,16 +1059,18 @@ func (d *Database) GetConfig() (*Config, error) {
 	return &c, nil
 }
 
-// UpdateConfig updates the global configuration
+// UpdateConfig aktualisiert die globale Konfiguration.
+// Nur nicht-nil Felder werden aktualisiert.
 func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Get current config
+	// Aktuelle Config laden
 	var c Config
 	var projectsBaseDir, githubToken, defaultBranch sql.NullString
 	var autoCommit, autoPush sql.NullBool
 	var defaultPriority, autoArchiveDays sql.NullInt64
+
 	err := d.db.QueryRow(`
 		SELECT id, default_project_dir, default_max_iterations, claude_command,
 		       COALESCE(projects_base_dir, ''), COALESCE(github_token, ''),
@@ -1047,6 +1084,8 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Nullable Werte übertragen
 	if projectsBaseDir.Valid {
 		c.ProjectsBaseDir = projectsBaseDir.String
 	}
@@ -1069,7 +1108,7 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 		c.AutoArchiveDays = int(autoArchiveDays.Int64)
 	}
 
-	// Apply updates
+	// Updates anwenden
 	if req.DefaultProjectDir != nil {
 		c.DefaultProjectDir = *req.DefaultProjectDir
 	}

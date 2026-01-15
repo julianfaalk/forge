@@ -161,6 +161,9 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	// Check if moving to done - need to merge and push
 	movingToDone := req.Status != nil && *req.Status == StatusDone
 
+	// Check if moving to review - need to commit and push branch for review
+	movingToReview := req.Status != nil && *req.Status == StatusReview && oldStatus == StatusProgress
+
 	// If moving away from progress, stop RALPH
 	if req.Status != nil && *req.Status != StatusProgress && oldStatus == StatusProgress {
 		h.runner.Stop(id)
@@ -194,6 +197,24 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 
+	// Handle push when moving to review - commit and push branch for review
+	if movingToReview && currentTask.WorkingBranch != "" {
+		projectDir := currentTask.ProjectDir
+		if projectDir == "" && currentTask.ProjectID != "" {
+			project, _ := h.db.GetProject(currentTask.ProjectID)
+			if project != nil {
+				projectDir = project.Path
+			}
+		}
+		if projectDir != "" && IsGitRepository(projectDir) {
+			err := PushWorkingBranchForReview(projectDir, currentTask.WorkingBranch, currentTask.Title)
+			if err != nil {
+				// Push failed - still allow moving to review but log error
+				h.db.UpdateTaskError(id, "Push warning: "+err.Error())
+			}
+		}
+	}
+
 	// Handle merge when moving to done
 	if movingToDone && currentTask.WorkingBranch != "" {
 		projectDir := currentTask.ProjectDir
@@ -204,7 +225,7 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 			}
 		}
 		if projectDir != "" && IsGitRepository(projectDir) {
-			err := MergeWorkingBranchToDefault(projectDir, currentTask.WorkingBranch)
+			err := MergeWorkingBranchToDefault(projectDir, currentTask.WorkingBranch, currentTask.Title)
 			if err != nil {
 				// Merge failed - move to blocked instead
 				blockedStatus := StatusBlocked
