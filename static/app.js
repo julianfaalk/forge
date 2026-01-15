@@ -3058,4 +3058,272 @@ git rebase --continue
             showToast('Error disconnecting', 'error');
         });
     }
+
+    // ============================================================================
+    // Create PR Modal Functions
+    // ============================================================================
+
+    let currentPRProjectId = null;
+
+    // Event Listeners for Create PR Modal
+    $('#btnCreatePR').click(function() {
+        openCreatePRModal();
+    });
+
+    $('.create-pr-close, #btnCancelPR').click(function() {
+        closeCreatePRModal();
+    });
+
+    $('#createPRModal').click(function(e) {
+        if (e.target === this) {
+            closeCreatePRModal();
+        }
+    });
+
+    $('#prProjectSelect').change(function() {
+        const projectId = $(this).val();
+        if (projectId) {
+            loadProjectBranches(projectId);
+        } else {
+            $('#prFromBranch').html('<option value="">Select branch...</option>');
+            $('#prToBranch').html('<option value="">Select branch...</option>');
+        }
+    });
+
+    $('#prFromBranch').change(function() {
+        const fromBranch = $(this).val();
+        if (fromBranch) {
+            // Auto-generate title from branch name
+            const cleanBranch = fromBranch.replace('origin/', '').replace('working/', '');
+            const parts = cleanBranch.split('-');
+            // Skip the ID part if it looks like "abc12345-feature-name"
+            if (parts.length > 1 && parts[0].length === 8 && /^[a-f0-9]+$/.test(parts[0])) {
+                parts.shift();
+            }
+            const title = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+            if (!$('#prTitle').val()) {
+                $('#prTitle').val(title);
+            }
+        }
+    });
+
+    $('#btnConfirmPR').click(function() {
+        createPullRequest();
+    });
+
+    function openCreatePRModal() {
+        // Reset state
+        currentPRProjectId = null;
+        $('#prStatus').addClass('hidden');
+        $('#prResult').addClass('hidden');
+        $('#prError').addClass('hidden');
+        $('#prTitle').val('');
+        $('#btnConfirmPR').prop('disabled', false).text('Create PR');
+
+        // Populate project dropdown with git-enabled projects
+        const $projectSelect = $('#prProjectSelect');
+        $projectSelect.html('<option value="">Select a project...</option>');
+
+        const gitProjects = projects.filter(p => p.is_git_repo);
+        gitProjects.forEach(function(p) {
+            $projectSelect.append(`<option value="${p.id}">${escapeHtml(p.name)}</option>`);
+        });
+
+        // Pre-select current project filter if it's a git repo
+        if (selectedProjectFilter) {
+            const selectedProject = projects.find(p => p.id === selectedProjectFilter && p.is_git_repo);
+            if (selectedProject) {
+                $projectSelect.val(selectedProjectFilter);
+                loadProjectBranches(selectedProjectFilter);
+            }
+        }
+
+        // Reset branch dropdowns
+        $('#prFromBranch').html('<option value="">Select branch...</option>');
+        $('#prToBranch').html('<option value="">Select branch...</option>');
+
+        $('#createPRModal').addClass('active');
+    }
+
+    function closeCreatePRModal() {
+        $('#createPRModal').removeClass('active');
+        currentPRProjectId = null;
+    }
+
+    function loadProjectBranches(projectId) {
+        currentPRProjectId = projectId;
+        const $fromSelect = $('#prFromBranch');
+        const $toSelect = $('#prToBranch');
+
+        $fromSelect.html('<option value="">Loading branches...</option>');
+        $toSelect.html('<option value="">Loading branches...</option>');
+
+        // Get branches for this project
+        $.get('/api/projects/' + projectId + '/branches')
+            .done(function(data) {
+                const branches = data.branches || [];
+
+                // Get current branch info
+                $.get('/api/projects/' + projectId + '/git-info')
+                    .done(function(gitInfo) {
+                        const currentBranch = gitInfo.current_branch || '';
+
+                        // Populate From Branch dropdown (only local branches)
+                        $fromSelect.html('<option value="">Select branch...</option>');
+                        branches.forEach(function(branch) {
+                            // Skip remote branches for "From" - we only want local branches
+                            if (branch.startsWith('origin/')) {
+                                return;
+                            }
+                            let displayName = branch;
+                            let isSelected = branch === currentBranch;
+                            $fromSelect.append(`<option value="${escapeHtml(branch)}" ${isSelected ? 'selected' : ''}>${escapeHtml(displayName)}</option>`);
+                        });
+
+                        // Populate To Branch dropdown (typically main/master)
+                        $toSelect.html('<option value="">Select branch...</option>');
+                        // Add main branches first
+                        const mainBranches = ['main', 'master', 'develop', 'staging'];
+                        const addedBranches = new Set();
+
+                        mainBranches.forEach(function(mainBranch) {
+                            // Check if branch exists in the list
+                            const found = branches.find(b => b === mainBranch || b === 'origin/' + mainBranch);
+                            if (found && !addedBranches.has(mainBranch)) {
+                                const isMain = mainBranch === 'main' || mainBranch === 'master';
+                                $toSelect.append(`<option value="${escapeHtml(found)}" ${isMain ? 'selected' : ''}>${escapeHtml(mainBranch)}</option>`);
+                                addedBranches.add(mainBranch);
+                            }
+                        });
+
+                        // Add other branches
+                        branches.forEach(function(branch) {
+                            const cleanName = branch.replace('origin/', '');
+                            if (!addedBranches.has(cleanName)) {
+                                $toSelect.append(`<option value="${escapeHtml(branch)}">${escapeHtml(branch)}</option>`);
+                                addedBranches.add(cleanName);
+                            }
+                        });
+
+                        // Trigger change to auto-fill title
+                        $fromSelect.trigger('change');
+                    })
+                    .fail(function() {
+                        // Fallback if git-info fails
+                        populateBranchDropdownsWithoutCurrentBranch(branches);
+                    });
+            })
+            .fail(function(xhr) {
+                const msg = xhr.responseJSON?.error || 'Failed to load branches';
+                $fromSelect.html('<option value="">Error loading branches</option>');
+                $toSelect.html('<option value="">Error loading branches</option>');
+                showToast(msg, 'error');
+            });
+    }
+
+    function populateBranchDropdownsWithoutCurrentBranch(branches) {
+        const $fromSelect = $('#prFromBranch');
+        const $toSelect = $('#prToBranch');
+
+        $fromSelect.html('<option value="">Select branch...</option>');
+        $toSelect.html('<option value="">Select branch...</option>');
+
+        branches.forEach(function(branch) {
+            $fromSelect.append(`<option value="${escapeHtml(branch)}">${escapeHtml(branch)}</option>`);
+            $toSelect.append(`<option value="${escapeHtml(branch)}">${escapeHtml(branch)}</option>`);
+        });
+
+        // Try to auto-select main/master for To Branch
+        const mainBranch = branches.find(b => b === 'main' || b === 'origin/main');
+        const masterBranch = branches.find(b => b === 'master' || b === 'origin/master');
+        if (mainBranch) {
+            $toSelect.val(mainBranch);
+        } else if (masterBranch) {
+            $toSelect.val(masterBranch);
+        }
+    }
+
+    function createPullRequest() {
+        const projectId = $('#prProjectSelect').val();
+        const fromBranch = $('#prFromBranch').val();
+        const toBranch = $('#prToBranch').val();
+        const title = $('#prTitle').val();
+
+        if (!projectId) {
+            showToast('Please select a project', 'error');
+            return;
+        }
+        if (!fromBranch || !toBranch) {
+            showToast('Please select both branches', 'error');
+            return;
+        }
+        if (fromBranch === toBranch) {
+            showToast('From and To branches must be different', 'error');
+            return;
+        }
+
+        // Show loading state
+        $('#prStatus').removeClass('hidden');
+        $('#prResult').addClass('hidden');
+        $('#prError').addClass('hidden');
+        $('#btnConfirmPR').prop('disabled', true).text('Creating...');
+
+        $.ajax({
+            url: '/api/github/create-pr',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                project_id: projectId,
+                from_branch: fromBranch,
+                to_branch: toBranch,
+                title: title
+            })
+        })
+        .done(function(data) {
+            $('#prStatus').addClass('hidden');
+
+            if (data.success) {
+                // Show success result
+                $('#prResult').removeClass('hidden');
+
+                if (data.existing) {
+                    $('.pr-success-text').text('PR #' + data.pr_number + ' already exists');
+                } else {
+                    $('.pr-success-text').text('PR #' + data.pr_number + ' created successfully!');
+                }
+
+                $('#prResultLink').attr('href', data.pr_url).text('View PR #' + data.pr_number);
+                $('#btnConfirmPR').prop('disabled', true).text('Done');
+
+                showToast(data.message || 'PR created successfully!', 'success');
+            } else {
+                // Show error
+                $('#prError').removeClass('hidden');
+
+                let errorMessage = data.error || 'Failed to create PR';
+                if (data.error_type === 'auth') {
+                    errorMessage = 'GitHub authentication failed. Please check your token in Settings.';
+                } else if (data.error_type === 'uncommitted') {
+                    errorMessage = 'You have uncommitted changes. Please commit your changes before creating a PR.';
+                } else if (data.error_type === 'identical') {
+                    errorMessage = 'No commits to merge. The source branch has no new commits compared to the target branch.';
+                }
+
+                $('#prError .pr-error-text').text(errorMessage);
+                $('#btnConfirmPR').prop('disabled', false).text('Create PR');
+
+                showToast(errorMessage, 'error');
+            }
+        })
+        .fail(function(xhr) {
+            $('#prStatus').addClass('hidden');
+            $('#prError').removeClass('hidden');
+
+            const msg = xhr.responseJSON?.error || 'Failed to create PR';
+            $('#prError .pr-error-text').text(msg);
+            $('#btnConfirmPR').prop('disabled', false).text('Create PR');
+
+            showToast(msg, 'error');
+        });
+    }
 });

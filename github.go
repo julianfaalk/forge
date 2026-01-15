@@ -196,3 +196,38 @@ func (c *GitHubClient) CreatePullRequest(repoFullName, title, body, head, base s
 
 	return &pr, nil
 }
+
+// FindExistingPR searches for an existing open PR with the same head and base branches
+func (c *GitHubClient) FindExistingPR(repoFullName, head, base string) (*GitHubPullRequest, error) {
+	url := fmt.Sprintf("%s/repos/%s/pulls?state=open&head=%s&base=%s", githubAPIURL, repoFullName, head, base)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var prs []GitHubPullRequest
+	if err := json.NewDecoder(resp.Body).Decode(&prs); err != nil {
+		return nil, err
+	}
+
+	if len(prs) > 0 {
+		return &prs[0], nil
+	}
+
+	return nil, nil
+}

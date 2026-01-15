@@ -115,6 +115,7 @@ func main() {
 
 	// GitHub-Routen: GitHub-Integration
 	mux.HandleFunc("/api/github/validate", handler.HandleGitHubValidate)
+	mux.HandleFunc("/api/github/create-pr", handler.HandleCreatePR)
 
 	// Projekt-Routen: CRUD und spezielle Operationen für Projekte
 	mux.HandleFunc("/api/projects", handler.HandleProjects)

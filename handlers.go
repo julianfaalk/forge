@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1490,5 +1491,251 @@ Original Task: %s
 	h.writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "resolving",
 		"message": "RALPH is resolving the merge conflict",
+	})
+}
+
+// ============================================================================
+// Create PR Handler (Header Button)
+// ============================================================================
+
+// CreatePRRequest represents the request body for creating a PR
+type CreatePRRequest struct {
+	ProjectID  string `json:"project_id"`
+	FromBranch string `json:"from_branch"`
+	ToBranch   string `json:"to_branch"`
+	Title      string `json:"title"`
+}
+
+// CreatePRResponse represents the response for PR creation
+type CreatePRResponse struct {
+	Success   bool   `json:"success"`
+	PRURL     string `json:"pr_url,omitempty"`
+	PRNumber  int    `json:"pr_number,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Existing  bool   `json:"existing,omitempty"`
+	Error     string `json:"error,omitempty"`
+	ErrorType string `json:"error_type,omitempty"` // "auth", "identical", "existing", "other"
+}
+
+// HandleCreatePR handles POST /api/github/create-pr
+func (h *Handler) HandleCreatePR(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req CreatePRRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "Invalid JSON: " + err.Error(),
+			ErrorType: "other",
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.ProjectID == "" {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "Project ID is required",
+			ErrorType: "other",
+		})
+		return
+	}
+	if req.FromBranch == "" || req.ToBranch == "" {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "From and To branches are required",
+			ErrorType: "other",
+		})
+		return
+	}
+
+	// Get project
+	project, err := h.db.GetProject(req.ProjectID)
+	if err != nil || project == nil {
+		h.writeJSON(w, http.StatusNotFound, CreatePRResponse{
+			Success:   false,
+			Error:     "Project not found",
+			ErrorType: "other",
+		})
+		return
+	}
+
+	// Check if it's a git repo
+	if !IsGitRepository(project.Path) {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "Project is not a git repository",
+			ErrorType: "other",
+		})
+		return
+	}
+
+	// Clean branch names (remove origin/ prefix if present)
+	fromBranch := strings.TrimPrefix(req.FromBranch, "origin/")
+	toBranch := strings.TrimPrefix(req.ToBranch, "origin/")
+
+	// Check for uncommitted changes only if the fromBranch is the current branch
+	// (uncommitted changes don't affect PRs from other branches)
+	currentBranch, _ := GetCurrentBranch(project.Path)
+	if currentBranch == fromBranch {
+		hasUncommitted, err := HasUncommittedChanges(project.Path)
+		if err != nil {
+			log.Printf("[CreatePR] Error checking uncommitted changes: %v", err)
+		}
+		if hasUncommitted {
+			h.writeJSON(w, http.StatusOK, CreatePRResponse{
+				Success:   false,
+				Error:     "You have uncommitted changes. Please commit your changes before creating a PR.",
+				ErrorType: "uncommitted",
+			})
+			return
+		}
+	}
+
+	// Get remote URL
+	remoteURL, err := GetRemoteURL(project.Path)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "Could not get remote URL - is the project connected to GitHub?",
+			ErrorType: "other",
+		})
+		return
+	}
+
+	// Parse GitHub repo
+	repoFullName, err := ParseGitHubRepoFromURL(remoteURL)
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "Could not parse GitHub repo from remote URL",
+			ErrorType: "other",
+		})
+		return
+	}
+
+	// Get config and check GitHub token
+	config, err := h.db.GetConfig()
+	if err != nil || config == nil || config.GithubToken == "" {
+		h.writeJSON(w, http.StatusBadRequest, CreatePRResponse{
+			Success:   false,
+			Error:     "GitHub token not configured. Please add your token in Settings.",
+			ErrorType: "auth",
+		})
+		return
+	}
+
+	// Create GitHub client
+	ghClient := NewGitHubClient(config.GithubToken)
+
+	// Get owner from repo full name for the head branch qualification
+	parts := strings.Split(repoFullName, "/")
+	owner := parts[0]
+
+	// Check if PR already exists
+	// Note: GitHub API requires head branch to be qualified with owner for cross-repo PRs
+	// For same-repo PRs, we need to check with just the branch name
+	existingPR, err := ghClient.FindExistingPR(repoFullName, owner+":"+fromBranch, toBranch)
+	if err != nil {
+		log.Printf("[CreatePR] Error checking for existing PR: %v", err)
+	}
+	if existingPR != nil {
+		h.writeJSON(w, http.StatusOK, CreatePRResponse{
+			Success:   true,
+			PRURL:     existingPR.HTMLURL,
+			PRNumber:  existingPR.Number,
+			Message:   fmt.Sprintf("PR #%d already exists", existingPR.Number),
+			Existing:  true,
+			ErrorType: "existing",
+		})
+		return
+	}
+
+	// Also check without owner prefix (for same-repo scenarios)
+	existingPR, _ = ghClient.FindExistingPR(repoFullName, fromBranch, toBranch)
+	if existingPR != nil {
+		h.writeJSON(w, http.StatusOK, CreatePRResponse{
+			Success:   true,
+			PRURL:     existingPR.HTMLURL,
+			PRNumber:  existingPR.Number,
+			Message:   fmt.Sprintf("PR #%d already exists", existingPR.Number),
+			Existing:  true,
+			ErrorType: "existing",
+		})
+		return
+	}
+
+	// Use provided title or generate from branch name
+	title := req.Title
+	if title == "" {
+		title = fmt.Sprintf("Merge %s into %s", fromBranch, toBranch)
+	}
+
+	// Create PR body
+	body := fmt.Sprintf("## Pull Request\n\nMerging `%s` into `%s`\n\n---\n*Created via RUNNER*", fromBranch, toBranch)
+
+	// First, push the branch to ensure it exists on remote
+	log.Printf("[CreatePR] Pushing branch %s to remote...", fromBranch)
+	pushCmd := fmt.Sprintf("cd %s && git push -u origin %s 2>&1", project.Path, fromBranch)
+	pushOutput, pushErr := exec.Command("bash", "-c", pushCmd).CombinedOutput()
+	if pushErr != nil {
+		log.Printf("[CreatePR] Push warning: %v, output: %s", pushErr, string(pushOutput))
+		// Don't fail here, the branch might already exist on remote
+	}
+
+	// Create the PR
+	pr, err := ghClient.CreatePullRequest(repoFullName, title, body, fromBranch, toBranch)
+	if err != nil {
+		errStr := err.Error()
+		// Check for specific error types
+		if strings.Contains(errStr, "No commits between") || strings.Contains(errStr, "no commit") {
+			h.writeJSON(w, http.StatusOK, CreatePRResponse{
+				Success:   false,
+				Error:     "Branches are identical - no changes to merge",
+				ErrorType: "identical",
+			})
+			return
+		}
+		if strings.Contains(errStr, "401") || strings.Contains(errStr, "403") || strings.Contains(errStr, "Bad credentials") {
+			h.writeJSON(w, http.StatusOK, CreatePRResponse{
+				Success:   false,
+				Error:     "GitHub authentication failed. Please check your token in Settings.",
+				ErrorType: "auth",
+			})
+			return
+		}
+		if strings.Contains(errStr, "already exists") || strings.Contains(errStr, "A pull request already exists") {
+			// Try to find the existing PR again
+			existingPR, _ := ghClient.FindExistingPR(repoFullName, fromBranch, toBranch)
+			if existingPR != nil {
+				h.writeJSON(w, http.StatusOK, CreatePRResponse{
+					Success:   true,
+					PRURL:     existingPR.HTMLURL,
+					PRNumber:  existingPR.Number,
+					Message:   fmt.Sprintf("PR #%d already exists", existingPR.Number),
+					Existing:  true,
+					ErrorType: "existing",
+				})
+				return
+			}
+		}
+
+		log.Printf("[CreatePR] Error creating PR: %v", err)
+		h.writeJSON(w, http.StatusInternalServerError, CreatePRResponse{
+			Success:   false,
+			Error:     "Failed to create PR: " + errStr,
+			ErrorType: "other",
+		})
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, CreatePRResponse{
+		Success:  true,
+		PRURL:    pr.HTMLURL,
+		PRNumber: pr.Number,
+		Message:  fmt.Sprintf("PR #%d created successfully", pr.Number),
 	})
 }
