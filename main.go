@@ -92,6 +92,8 @@ func main() {
 			handler.HandleTaskStop(w, r) // RALPH-Prozess stoppen
 		} else if strings.HasSuffix(path, "/feedback") {
 			handler.HandleTaskFeedback(w, r) // Feedback an Claude senden
+		} else if strings.HasSuffix(path, "/continue") {
+			handler.HandleTaskContinue(w, r) // Task in Queue mit Message fortsetzen
 		} else if strings.HasSuffix(path, "/deploy") {
 			handler.HandleDeployTask(w, r) // Task deployen (commit & push)
 		} else if strings.HasSuffix(path, "/merge") {

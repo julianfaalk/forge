@@ -357,6 +357,22 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 8 completed")
 	}
 
+	// ========== Migration 9: Continue Message for Queue ==========
+	if version < 9 {
+		log.Println("Running migration 9: Adding continue_message field to tasks")
+
+		_, err := d.db.Exec("ALTER TABLE tasks ADD COLUMN continue_message TEXT DEFAULT ''")
+		if err != nil {
+			log.Printf("Note: Column tasks.continue_message may already exist: %v", err)
+		}
+
+		_, err = d.db.Exec("INSERT INTO schema_version (version) VALUES (9)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 9 completed")
+	}
+
 	return nil
 }
 
@@ -379,6 +395,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
+		       COALESCE(t.continue_message, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -404,6 +421,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
 			&t.RollbackTag, &t.CommitHash,
+			&t.ContinueMessage,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -449,6 +467,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
+		       COALESCE(t.continue_message, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -462,6 +481,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 		&startedAt, &finishedAt,
 		&t.RollbackTag, &t.CommitHash,
+		&t.ContinueMessage,
 		&ttID, &ttName, &ttColor, &ttIsSystem,
 	)
 	if err == sql.ErrNoRows {
@@ -501,6 +521,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
+		       COALESCE(t.continue_message, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -527,6 +548,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
 			&t.RollbackTag, &t.CommitHash,
+			&t.ContinueMessage,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -810,7 +832,8 @@ func (d *Database) GetQueuedTasks() ([]Task, error) {
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
 		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
-		       started_at, finished_at
+		       started_at, finished_at,
+		       COALESCE(continue_message, '')
 		FROM tasks
 		WHERE status = 'queued' AND queue_position > 0
 		ORDER BY queue_position ASC
@@ -832,6 +855,7 @@ func (d *Database) GetQueuedTasks() ([]Task, error) {
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
+			&t.ContinueMessage,
 		)
 		if err != nil {
 			return nil, err
@@ -862,7 +886,8 @@ func (d *Database) GetNextQueuedTask() (*Task, error) {
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
 		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
-		       started_at, finished_at
+		       started_at, finished_at,
+		       COALESCE(continue_message, '')
 		FROM tasks
 		WHERE status = 'queued' AND queue_position > 0
 		ORDER BY queue_position ASC
@@ -875,6 +900,7 @@ func (d *Database) GetNextQueuedTask() (*Task, error) {
 		&t.ConflictPRURL, &t.ConflictPRNumber,
 		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 		&startedAt, &finishedAt,
+		&t.ContinueMessage,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -939,6 +965,37 @@ func (d *Database) AddToQueue(taskID string) error {
 	_, err = d.db.Exec(`
 		UPDATE tasks SET queue_position = ?, status = 'queued', updated_at = ? WHERE id = ?
 	`, nextPos, time.Now(), taskID)
+	return err
+}
+
+// AddToQueueWithMessage adds a task to the queue with a continue message.
+func (d *Database) AddToQueueWithMessage(taskID string, message string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Get the next position
+	var maxPos sql.NullInt64
+	err := d.db.QueryRow(`SELECT MAX(queue_position) FROM tasks WHERE status = 'queued'`).Scan(&maxPos)
+	if err != nil {
+		return err
+	}
+	nextPos := 1
+	if maxPos.Valid {
+		nextPos = int(maxPos.Int64) + 1
+	}
+
+	_, err = d.db.Exec(`
+		UPDATE tasks SET queue_position = ?, status = 'queued', continue_message = ?, error = '', updated_at = ? WHERE id = ?
+	`, nextPos, message, time.Now(), taskID)
+	return err
+}
+
+// ClearContinueMessage clears the continue message for a task.
+func (d *Database) ClearContinueMessage(taskID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`UPDATE tasks SET continue_message = '', updated_at = ? WHERE id = ?`, time.Now(), taskID)
 	return err
 }
 
@@ -1015,7 +1072,8 @@ func (d *Database) GetTasksWithRunningProcess() ([]Task, error) {
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
 		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
-		       started_at, finished_at
+		       started_at, finished_at,
+		       COALESCE(continue_message, '')
 		FROM tasks
 		WHERE process_pid > 0
 	`)
@@ -1036,6 +1094,7 @@ func (d *Database) GetTasksWithRunningProcess() ([]Task, error) {
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
+			&t.ContinueMessage,
 		)
 		if err != nil {
 			return nil, err
