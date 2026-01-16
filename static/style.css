@@ -282,6 +282,83 @@ body {
     height: 14px;
 }
 
+/* Push Button (Trunk-based development) */
+.push-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 0.4rem 0.6rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-left: 0.5rem;
+}
+
+.push-btn:hover {
+    background-color: var(--bg-tertiary);
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+}
+
+.push-btn.hidden {
+    display: none;
+}
+
+.push-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+.push-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 16px;
+    text-align: center;
+    color: var(--bg-primary);
+    background-color: var(--accent-color);
+    border-radius: 8px;
+}
+
+.push-badge.hidden {
+    display: none;
+}
+
+/* Rollback Button (Trunk-based development) */
+.btn-rollback {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--warning);
+    background-color: transparent;
+    border: 1px solid var(--warning);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-rollback:hover {
+    background-color: var(--warning);
+    color: var(--bg-primary);
+}
+
+.btn-rollback svg {
+    width: 12px;
+    height: 12px;
+}
+
 .branch-dropdown {
     position: absolute;
     top: 100%;
@@ -351,6 +428,21 @@ body {
 
 .branch-dropdown-item.active .branch-item-badge {
     background-color: rgba(255,255,255,0.2);
+    color: white;
+}
+
+.branch-dropdown-separator {
+    height: 1px;
+    background-color: var(--border-color);
+    margin: 0.5rem 0;
+}
+
+.branch-create-new {
+    color: var(--accent);
+}
+
+.branch-create-new:hover {
+    background-color: var(--accent);
     color: white;
 }
 

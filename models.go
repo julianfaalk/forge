@@ -55,6 +55,10 @@ type Task struct {
 	ConflictPRURL    string `json:"conflict_pr_url,omitempty"`    // GitHub PR URL for conflict resolution
 	ConflictPRNumber int    `json:"conflict_pr_number,omitempty"` // GitHub PR number
 
+	// Trunk-based development fields
+	RollbackTag string `json:"rollback_tag,omitempty"` // Git tag: runner-before-{taskID}
+	CommitHash  string `json:"commit_hash,omitempty"`  // Commit hash bei Task-Ende
+
 	// Queue and Process tracking
 	QueuePosition int        `json:"queue_position"`           // Position in Queue (0 = not queued)
 	ProcessPID    int        `json:"process_pid,omitempty"`    // PID of running Claude process
@@ -91,6 +95,9 @@ type Project struct {
 	IsAutoDetected bool      `json:"is_auto_detected"` // true = durch Scan gefunden
 	CreatedAt      time.Time `json:"created_at"`       // Erstellungszeitpunkt
 	UpdatedAt      time.Time `json:"updated_at"`       // Letztes Update
+
+	// Trunk-based development: persistenter Arbeits-Branch
+	WorkingBranch string `json:"working_branch,omitempty"` // Persistenter Arbeits-Branch
 
 	// Berechnete Felder (nicht in DB gespeichert, zur Laufzeit ermittelt)
 	CurrentBranch string `json:"current_branch,omitempty"` // Aktuell ausgecheckter Branch
@@ -134,6 +141,9 @@ type Config struct {
 	DefaultBranch   string `json:"default_branch"`   // Standard-Branch (z.B. "main")
 	DefaultPriority int    `json:"default_priority"` // Standard-Priorität für neue Tasks
 	AutoArchiveDays int    `json:"auto_archive_days"`// Tage bis Auto-Archivierung (0 = deaktiviert)
+
+	// Trunk-based development
+	PushStrategy string `json:"push_strategy"` // "manual", "auto_task", "auto_commit"
 }
 
 // ============================================================================
@@ -325,4 +335,21 @@ type MergeResult struct {
 	Success  bool           `json:"success"`           // true = Merge erfolgreich
 	Conflict *MergeConflict `json:"conflict,omitempty"` // Konflikt-Details falls !success
 	Message  string         `json:"message"`           // Status-Nachricht
+}
+
+// ============================================================================
+// Trunk-Based Development Types
+// ============================================================================
+
+// PushStatusResponse für GET /api/projects/{id}/push-status
+type PushStatusResponse struct {
+	UnpushedCount int    `json:"unpushed_count"`
+	Branch        string `json:"branch"`
+	HasRemote     bool   `json:"has_remote"`
+}
+
+// SetWorkingBranchRequest für POST /api/projects/{id}/working-branch
+type SetWorkingBranchRequest struct {
+	Branch string `json:"branch"`
+	Create bool   `json:"create"` // true = neuen Branch von main erstellen
 }

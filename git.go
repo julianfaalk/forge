@@ -784,3 +784,114 @@ func TryMergeWorkingBranch(path string, workingBranch string, targetBranch strin
 		Message: fmt.Sprintf("Successfully merged '%s' into '%s'", workingBranch, defaultBranch),
 	}
 }
+
+// ============================================================================
+// Trunk-Based Development Functions
+// ============================================================================
+
+// CreateRollbackTag erstellt einen Git-Tag vor Task-Start
+func CreateRollbackTag(path string, taskID string) (string, error) {
+	shortID := taskID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	tagName := fmt.Sprintf("runner-before-%s", shortID)
+	cmd := exec.Command("git", "tag", tagName)
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git tag failed: %v, output: %s", err, string(output))
+	}
+	return tagName, nil
+}
+
+// DeleteTag löscht einen Git-Tag
+func DeleteTag(path string, tagName string) error {
+	cmd := exec.Command("git", "tag", "-d", tagName)
+	cmd.Dir = path
+	cmd.CombinedOutput() // Fehler ignorieren
+	return nil
+}
+
+// RollbackToTag führt git reset --hard zum Tag aus
+func RollbackToTag(path string, tagName string) error {
+	cmd := exec.Command("git", "reset", "--hard", tagName)
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git reset failed: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// GetUnpushedCommitCount zählt Commits die noch nicht gepusht wurden
+func GetUnpushedCommitCount(path string, branch string) (int, error) {
+	// Fetch um Remote-Refs zu aktualisieren
+	fetchCmd := exec.Command("git", "fetch", "origin")
+	fetchCmd.Dir = path
+	fetchCmd.Run() // Fehler ignorieren falls kein Remote
+
+	cmd := exec.Command("git", "rev-list", "--count", fmt.Sprintf("origin/%s..%s", branch, branch))
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	fmt.Sscanf(strings.TrimSpace(string(output)), "%d", &count)
+	return count, nil
+}
+
+// HasRemote prüft ob ein Remote namens 'origin' existiert
+func HasRemote(path string) bool {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = path
+	err := cmd.Run()
+	return err == nil
+}
+
+// EnsureOnBranch wechselt zum Branch falls nötig
+func EnsureOnBranch(path string, branch string) error {
+	current, err := GetCurrentBranch(path)
+	if err != nil {
+		return err
+	}
+	if current == branch {
+		return nil
+	}
+	return CheckoutBranch(path, branch)
+}
+
+// GetCurrentCommitHash returns the current HEAD commit hash
+func GetCurrentCommitHash(path string) (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = path
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+// CreateBranchFromMain erstellt einen neuen Branch von main/master
+func CreateBranchFromMain(path string, branchName string) error {
+	defaultBranch := GetDefaultBranch(path)
+
+	// Checkout default branch
+	if err := CheckoutBranch(path, defaultBranch); err != nil {
+		return fmt.Errorf("failed to checkout %s: %v", defaultBranch, err)
+	}
+
+	// Pull latest
+	if err := PullFromRemote(path); err != nil {
+		log.Printf("Warning: Failed to pull latest changes: %v (continuing)", err)
+	}
+
+	// Create and checkout new branch
+	if err := CreateAndCheckoutBranch(path, branchName); err != nil {
+		return fmt.Errorf("failed to create branch %s: %v", branchName, err)
+	}
+
+	return nil
+}
