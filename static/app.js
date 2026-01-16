@@ -2181,9 +2181,25 @@ git rebase --continue
         }
     }
 
+    // Update logo icon pulsating state based on active tasks
+    function updateLogoIconState() {
+        const $logoIcon = $('#logoIcon');
+        const hasActiveTasks = tasks.some(t => t.status === 'progress');
+
+        if (hasActiveTasks) {
+            $logoIcon.addClass('pulsating');
+        } else {
+            $logoIcon.removeClass('pulsating');
+        }
+    }
+
     // Rendering
     function renderAllTasks() {
         const statuses = ['backlog', 'queued', 'progress', 'review', 'done', 'blocked'];
+
+        // Update logo icon pulsating state
+        updateLogoIconState();
+
         statuses.forEach(function(status) {
             const $container = $(`.column[data-status="${status}"] .tasks-container`);
             $container.empty();
