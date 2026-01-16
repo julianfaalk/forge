@@ -55,12 +55,6 @@ func main() {
 	}
 	defer db.Close()
 
-	// Tasks, die bei einem Server-Neustart noch "in progress" waren,
-	// werden als "blocked" markiert, da der Claude-Prozess nicht mehr läuft
-	if err := db.MarkRunningTasksAsBlocked("Server was restarted"); err != nil {
-		log.Printf("Warning: Failed to mark running tasks as blocked: %v", err)
-	}
-
 	// WebSocket-Hub initialisieren
 	// Der Hub verwaltet alle aktiven WebSocket-Verbindungen und
 	// sendet Broadcasts an alle verbundenen Clients
@@ -70,6 +64,10 @@ func main() {
 	// RALPH-Runner initialisieren
 	// Der Runner startet und verwaltet Claude CLI Prozesse für Tasks
 	runner := NewRalphRunner(db, hub)
+
+	// Intelligent recovery: Check tasks with stored PIDs on startup
+	// and mark them as blocked if the process is no longer running
+	recoverTasks(db, runner)
 
 	// HTTP-Handler initialisieren
 	// Der Handler verarbeitet alle API-Anfragen
@@ -202,6 +200,60 @@ func main() {
 	}
 
 	log.Println("GRINDER stopped")
+}
+
+// recoverTasks handles intelligent task recovery on server restart.
+// It checks tasks that have a non-zero PID stored and verifies if the process is still running.
+// If the process is no longer running, the task is marked as blocked.
+// After recovery, it tries to start any queued tasks.
+func recoverTasks(db *Database, runner *RalphRunner) {
+	log.Println("Checking for tasks with stored PIDs...")
+
+	tasks, err := db.GetTasksWithRunningProcess()
+	if err != nil {
+		log.Printf("Warning: Failed to get tasks with PIDs: %v", err)
+		return
+	}
+
+	recoveredCount := 0
+	for _, task := range tasks {
+		// Check if the process is still running using signal 0
+		// Signal 0 doesn't send a signal but checks if the process exists
+		process, err := os.FindProcess(task.ProcessPID)
+		if err != nil {
+			// Process not found - mark as blocked
+			log.Printf("Task %s: Process %d not found, marking as blocked", task.ID, task.ProcessPID)
+			db.UpdateTaskStatus(task.ID, StatusBlocked)
+			db.UpdateTaskError(task.ID, "Server restarted - process was terminated")
+			db.UpdateTaskProcessInfo(task.ID, 0, "error")
+			db.UpdateTaskFinishedAt(task.ID)
+			recoveredCount++
+			continue
+		}
+
+		// On Unix, FindProcess always succeeds, so we need to send signal 0 to check
+		err = process.Signal(syscall.Signal(0))
+		if err != nil {
+			// Process no longer exists
+			log.Printf("Task %s: Process %d no longer running, marking as blocked", task.ID, task.ProcessPID)
+			db.UpdateTaskStatus(task.ID, StatusBlocked)
+			db.UpdateTaskError(task.ID, "Server restarted - process was terminated")
+			db.UpdateTaskProcessInfo(task.ID, 0, "error")
+			db.UpdateTaskFinishedAt(task.ID)
+			recoveredCount++
+		} else {
+			// Process is still running - this shouldn't happen after a server restart
+			// but we'll leave it as is
+			log.Printf("Task %s: Process %d still running (unexpected)", task.ID, task.ProcessPID)
+		}
+	}
+
+	if recoveredCount > 0 {
+		log.Printf("Recovered %d tasks that were interrupted by server restart", recoveredCount)
+	}
+
+	// Try to start any queued tasks after recovery
+	go runner.TryStartNextQueued()
 }
 
 // corsMiddleware fügt CORS-Header für lokale Entwicklung hinzu.

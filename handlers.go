@@ -182,6 +182,29 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	// Check if moving to progress - need to start RALPH and create branch
 	startRalph := req.Status != nil && *req.Status == StatusProgress && oldStatus != StatusProgress
 
+	// Sequential mode: If moving to progress and there's already a task in progress, redirect to queue
+	if startRalph {
+		hasInProgress, _ := h.db.HasTaskInProgress()
+		if hasInProgress {
+			// Redirect to queue instead of progress
+			if err := h.db.AddToQueue(id); err != nil {
+				h.writeError(w, http.StatusInternalServerError, "Failed to add task to queue: "+err.Error())
+				return
+			}
+			// Update task to get the new status
+			task, _ := h.db.GetTask(id)
+			if task != nil {
+				// Load attachments for broadcast
+				if attachments, err := h.db.GetAttachmentsByTask(task.ID); err == nil {
+					task.Attachments = attachments
+				}
+				h.hub.BroadcastTaskUpdate(task)
+			}
+			h.writeJSON(w, http.StatusOK, task)
+			return
+		}
+	}
+
 	// Check if moving to review - need to commit and push branch for review
 	// Push when moving TO review from any status (not just from progress)
 	movingToReview := req.Status != nil && *req.Status == StatusReview && oldStatus != StatusReview
@@ -189,6 +212,11 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 	// If moving away from progress, stop RALPH
 	if req.Status != nil && *req.Status != StatusProgress && oldStatus == StatusProgress {
 		h.runner.Stop(id)
+	}
+
+	// If moving away from queued, remove from queue
+	if req.Status != nil && *req.Status != StatusQueued && oldStatus == StatusQueued {
+		h.db.RemoveFromQueue(id)
 	}
 
 	// Reset task if moving to progress
@@ -581,6 +609,18 @@ func (h *Handler) getProjects(w http.ResponseWriter, r *http.Request) {
 	if projects == nil {
 		projects = []Project{}
 	}
+
+	// Enrich projects with GitHub URL if they have a remote
+	for i := range projects {
+		if projects[i].IsGitRepo {
+			if remoteURL, err := GetRemoteURL(projects[i].Path); err == nil && remoteURL != "" {
+				if repoPath, err := ParseGitHubRepoFromURL(remoteURL); err == nil {
+					projects[i].GithubURL = "https://github.com/" + repoPath
+				}
+			}
+		}
+	}
+
 	h.writeJSON(w, http.StatusOK, projects)
 }
 

@@ -127,6 +127,36 @@
     <!-- Sidebar Overlay (for dimming background) -->
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
+    <!-- Mobile Column Tabs (visible only on mobile, positioned below header) -->
+    <div class="mobile-column-tabs" id="mobileColumnTabs">
+        <div class="mobile-column-tabs-inner">
+            <button class="mobile-tab active" data-status="backlog">
+                <span class="mobile-tab-label">Backlog</span>
+                <span class="mobile-tab-count" data-count="backlog">0</span>
+            </button>
+            <button class="mobile-tab" data-status="queued">
+                <span class="mobile-tab-label">Queue</span>
+                <span class="mobile-tab-count" data-count="queued">0</span>
+            </button>
+            <button class="mobile-tab" data-status="progress">
+                <span class="mobile-tab-label">Progress</span>
+                <span class="mobile-tab-count" data-count="progress">0</span>
+            </button>
+            <button class="mobile-tab" data-status="review">
+                <span class="mobile-tab-label">Review</span>
+                <span class="mobile-tab-count" data-count="review">0</span>
+            </button>
+            <button class="mobile-tab" data-status="done">
+                <span class="mobile-tab-label">Done</span>
+                <span class="mobile-tab-count" data-count="done">0</span>
+            </button>
+            <button class="mobile-tab" data-status="blocked">
+                <span class="mobile-tab-label">Blocked</span>
+                <span class="mobile-tab-count" data-count="blocked">0</span>
+            </button>
+        </div>
+    </div>
+
     <div class="app-container">
         <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
@@ -162,10 +192,17 @@
         <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
 
         <main class="board">
-            <div class="column" data-status="backlog">
+            <div class="column mobile-active" data-status="backlog">
                 <div class="column-header">
                     <h2>Backlog</h2>
                     <button class="btn btn-add" data-status="backlog">+</button>
+                </div>
+                <div class="tasks-container"></div>
+            </div>
+
+            <div class="column" data-status="queued">
+                <div class="column-header">
+                    <h2>Queue</h2>
                 </div>
                 <div class="tasks-container"></div>
             </div>
@@ -229,25 +266,22 @@
 
                     <!-- Attachments Section -->
                     <div class="form-group" id="attachmentsSection">
-                        <label>Attachments (optional)</label>
-                        <div id="attachmentDropZone" class="attachment-drop-zone">
-                            <div class="drop-zone-content">
-                                <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                                    <polyline points="17 8 12 3 7 8"/>
-                                    <line x1="12" y1="3" x2="12" y2="15"/>
-                                </svg>
-                                <p>Drag & Drop files here</p>
-                                <span class="drop-zone-or">or</span>
-                                <label class="btn btn-secondary btn-small">
-                                    Click to Upload
-                                    <input type="file" id="attachmentInput" multiple accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden>
-                                </label>
-                                <p class="help-text">PNG, JPG, GIF, WEBP, MP4, MOV, WEBM</p>
-                            </div>
+                        <label>Attachments</label>
+                        <div id="attachmentDropZone" class="attachment-drop-zone compact">
+                            <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                            </svg>
+                            <span class="drop-zone-text">Drop files or</span>
+                            <label class="btn btn-secondary btn-small">
+                                Browse
+                                <input type="file" id="attachmentInput" multiple accept="image/png,image/jpeg,image/gif,image/webp,video/mp4,video/webm,video/quicktime" hidden>
+                            </label>
                         </div>
                         <div id="attachmentList" class="attachment-list">
                             <!-- Attachments rendered here -->
+                        </div>
+                        <div id="pendingAttachmentList" class="attachment-list pending">
+                            <!-- Pending attachments (before task save) rendered here -->
                         </div>
                     </div>
 
@@ -777,6 +811,26 @@
             <div class="modal-footer">
                 <button id="btnCancelPR" class="btn btn-secondary">Cancel</button>
                 <button id="btnConfirmPR" class="btn btn-primary">Create PR</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Modal (Cmd+K) -->
+    <div id="searchModal" class="search-modal">
+        <div class="search-modal-content">
+            <div class="search-input-wrapper">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                </svg>
+                <input type="text" id="searchInput" class="search-input" placeholder="Search tasks..." autocomplete="off">
+                <kbd class="search-shortcut">ESC</kbd>
+            </div>
+            <div id="searchResults" class="search-results">
+                <!-- Search results will be rendered here -->
+            </div>
+            <div id="searchEmpty" class="search-empty hidden">
+                <span>No tasks found</span>
             </div>
         </div>
     </div>

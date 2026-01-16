@@ -17,6 +17,7 @@ type TaskStatus string
 
 const (
 	StatusBacklog  TaskStatus = "backlog"  // Task ist geplant, aber nicht gestartet
+	StatusQueued   TaskStatus = "queued"   // Task wartet in der Queue
 	StatusProgress TaskStatus = "progress" // Task wird von RALPH bearbeitet
 	StatusReview   TaskStatus = "review"   // RALPH ist fertig, wartet auf Überprüfung
 	StatusDone     TaskStatus = "done"     // Task ist abgeschlossen und deployed
@@ -54,6 +55,13 @@ type Task struct {
 	ConflictPRURL    string `json:"conflict_pr_url,omitempty"`    // GitHub PR URL for conflict resolution
 	ConflictPRNumber int    `json:"conflict_pr_number,omitempty"` // GitHub PR number
 
+	// Queue and Process tracking
+	QueuePosition int        `json:"queue_position"`           // Position in Queue (0 = not queued)
+	ProcessPID    int        `json:"process_pid,omitempty"`    // PID of running Claude process
+	ProcessStatus string     `json:"process_status,omitempty"` // idle, running, finished, error
+	StartedAt     *time.Time `json:"started_at,omitempty"`     // When RALPH started
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`    // When RALPH finished
+
 	// Attachments - optional screenshots/videos for visual context
 	Attachments []Attachment `json:"attachments,omitempty"` // Liste der Anhänge (Bilder/Videos)
 
@@ -88,6 +96,7 @@ type Project struct {
 	CurrentBranch string `json:"current_branch,omitempty"` // Aktuell ausgecheckter Branch
 	IsGitRepo     bool   `json:"is_git_repo"`              // true = .git Verzeichnis existiert
 	TaskCount     int    `json:"task_count,omitempty"`     // Anzahl verknüpfter Tasks
+	GithubURL     string `json:"github_url,omitempty"`     // GitHub Repository URL (z.B. https://github.com/owner/repo)
 }
 
 // BranchProtectionRule definiert Branches, auf die RALPH niemals pushen darf.

@@ -537,6 +537,18 @@ func GenerateWorkingBranchName(taskID string, taskTitle string) string {
 	return fmt.Sprintf("working/%s-%s", shortID, slug)
 }
 
+// PullFromRemote pulls the latest changes from the remote using fast-forward only.
+// This is used to ensure we're creating branches from the latest main.
+func PullFromRemote(path string) error {
+	cmd := exec.Command("git", "pull", "--ff-only")
+	cmd.Dir = path
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git pull failed: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
 // CreateWorkingBranch creates a working branch for a task based on the default branch
 func CreateWorkingBranch(path string, taskID string, taskTitle string) (string, error) {
 	if !IsGitRepository(path) {
@@ -549,6 +561,11 @@ func CreateWorkingBranch(path string, taskID string, taskTitle string) (string, 
 	// First checkout the default branch to ensure we're starting from there
 	if err := CheckoutBranch(path, defaultBranch); err != nil {
 		return "", fmt.Errorf("failed to checkout %s: %v", defaultBranch, err)
+	}
+
+	// Pull latest changes from remote to ensure we're creating from fresh main
+	if err := PullFromRemote(path); err != nil {
+		log.Printf("Warning: Failed to pull latest changes: %v (continuing)", err)
 	}
 
 	// Generate branch name

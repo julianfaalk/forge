@@ -219,6 +219,10 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[GRINDER] Claude started (PID %d)...\n", cmd.Process.Pid))
 	r.hub.BroadcastStatus(task.ID, StatusProgress, 0)
 
+	// Persist PID and timestamps for process tracking/recovery
+	r.db.UpdateTaskProcessInfo(task.ID, cmd.Process.Pid, "running")
+	r.db.UpdateTaskStartedAt(task.ID)
+
 	// Send the initial prompt via stdin and close it to signal EOF
 	// Claude needs EOF to start processing in non-interactive mode
 	go func() {
@@ -242,6 +246,8 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 
 		if ctx.Err() == context.Canceled {
 			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process stopped by user\n")
+			// Still try to start next queued task after cancellation
+			go r.TryStartNextQueued()
 			return
 		}
 
@@ -255,6 +261,9 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 		} else {
 			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process completed\n")
 		}
+
+		// Try to start next queued task after process cleanup
+		go r.TryStartNextQueued()
 	}()
 }
 
@@ -448,6 +457,8 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 
 		if ctx.Err() == context.Canceled {
 			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process stopped by user\n")
+			// Still try to start next queued task after cancellation
+			go r.TryStartNextQueued()
 			return
 		}
 
@@ -461,6 +472,9 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		} else {
 			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process completed\n")
 		}
+
+		// Try to start next queued task after process cleanup
+		go r.TryStartNextQueued()
 	}()
 }
 
@@ -528,6 +542,7 @@ func (r *RalphRunner) processOutput(taskID string, reader io.Reader, maxIteratio
 }
 
 // handleSuccess handles successful task completion
+// Note: TryStartNextQueued is called from cmd.Wait() goroutine after process cleanup
 func (r *RalphRunner) handleSuccess(taskID string) {
 	r.db.UpdateTaskStatus(taskID, StatusReview)
 	r.hub.BroadcastStatus(taskID, StatusReview, 0)
@@ -541,6 +556,7 @@ func (r *RalphRunner) handleSuccess(taskID string) {
 }
 
 // handleBlocked handles a blocked task
+// Note: TryStartNextQueued is called from cmd.Wait() goroutine after process cleanup
 func (r *RalphRunner) handleBlocked(taskID string, reason string) {
 	r.db.UpdateTaskStatus(taskID, StatusBlocked)
 	r.db.UpdateTaskError(taskID, reason)
@@ -554,6 +570,7 @@ func (r *RalphRunner) handleBlocked(taskID string, reason string) {
 }
 
 // handleIterationLimit handles reaching the iteration limit
+// Note: TryStartNextQueued is called from cmd.Wait() goroutine after Stop() triggers cleanup
 func (r *RalphRunner) handleIterationLimit(taskID string, limit int) {
 	msg := fmt.Sprintf("Reached maximum iterations (%d)", limit)
 	r.db.UpdateTaskStatus(taskID, StatusBlocked)
@@ -566,7 +583,7 @@ func (r *RalphRunner) handleIterationLimit(taskID string, limit int) {
 		r.hub.BroadcastTaskUpdate(task)
 	}
 
-	// Stop the process
+	// Stop the process - this triggers cleanup and TryStartNextQueued via cmd.Wait goroutine
 	r.Stop(taskID)
 }
 
@@ -583,6 +600,9 @@ func (r *RalphRunner) handleError(taskID string, message string) {
 	}
 
 	r.cleanup(taskID)
+
+	// Try to start next queued task
+	go r.TryStartNextQueued()
 }
 
 // Pause pauses a running RALPH process
@@ -673,7 +693,7 @@ func (r *RalphRunner) SendFeedback(taskID string, message string) error {
 	return fmt.Errorf("cannot send feedback via stdin - use Continue to restart with feedback")
 }
 
-// cleanup removes a process from the map
+// cleanup removes a process from the map and clears process tracking info
 func (r *RalphRunner) cleanup(taskID string) {
 	r.mu.Lock()
 	if proc, exists := r.processes[taskID]; exists {
@@ -683,6 +703,10 @@ func (r *RalphRunner) cleanup(taskID string) {
 	}
 	delete(r.processes, taskID)
 	r.mu.Unlock()
+
+	// Clear PID and update finished timestamp
+	r.db.UpdateTaskProcessInfo(taskID, 0, "finished")
+	r.db.UpdateTaskFinishedAt(taskID)
 }
 
 // StopAll stops all running processes (for graceful shutdown)
@@ -709,4 +733,95 @@ func (r *RalphRunner) IsRunning(taskID string) bool {
 	defer r.mu.RUnlock()
 	_, exists := r.processes[taskID]
 	return exists
+}
+
+// TryStartNextQueued checks if there's a queued task and starts it if no process is running.
+// This is called after a task completes (success, blocked, iteration limit) to auto-start the next queued task.
+func (r *RalphRunner) TryStartNextQueued() {
+	r.mu.RLock()
+	runningCount := len(r.processes)
+	r.mu.RUnlock()
+
+	// Only start next if no process is running
+	if runningCount > 0 {
+		log.Printf("TryStartNextQueued: %d processes still running, skipping", runningCount)
+		return
+	}
+
+	// Get next queued task
+	nextTask, err := r.db.GetNextQueuedTask()
+	if err != nil {
+		log.Printf("TryStartNextQueued: Error getting next queued task: %v", err)
+		return
+	}
+	if nextTask == nil {
+		log.Printf("TryStartNextQueued: No queued tasks")
+		return
+	}
+
+	log.Printf("TryStartNextQueued: Starting task %s (%s) from queue position %d",
+		nextTask.ID, nextTask.Title, nextTask.QueuePosition)
+
+	// Remove from queue and update status
+	r.db.RemoveFromQueue(nextTask.ID)
+	r.db.UpdateTaskStatus(nextTask.ID, StatusProgress)
+	r.db.ResetTaskForProgress(nextTask.ID)
+
+	// Get project directory
+	projectDir := nextTask.ProjectDir
+	if projectDir == "" && nextTask.ProjectID != "" {
+		project, _ := r.db.GetProject(nextTask.ProjectID)
+		if project != nil {
+			projectDir = project.Path
+			nextTask.ProjectDir = projectDir
+		}
+	}
+
+	// If still no project directory, block the task
+	if projectDir == "" {
+		log.Printf("TryStartNextQueued: No project directory for task %s", nextTask.ID)
+		r.db.UpdateTaskStatus(nextTask.ID, StatusBlocked)
+		r.db.UpdateTaskError(nextTask.ID, "No project directory specified")
+		updatedTask, _ := r.db.GetTask(nextTask.ID)
+		if updatedTask != nil {
+			r.hub.BroadcastTaskUpdate(updatedTask)
+		}
+		// Try the next one
+		go r.TryStartNextQueued()
+		return
+	}
+
+	// Create working branch if in a git repo
+	if projectDir != "" && IsGitRepository(projectDir) {
+		branchName, err := CreateWorkingBranch(projectDir, nextTask.ID, nextTask.Title)
+		if err != nil {
+			log.Printf("TryStartNextQueued: Failed to create branch: %v", err)
+			r.db.UpdateTaskStatus(nextTask.ID, StatusBlocked)
+			r.db.UpdateTaskError(nextTask.ID, "Failed to create working branch: "+err.Error())
+			r.hub.BroadcastTaskUpdate(nextTask)
+			// Try the next one
+			go r.TryStartNextQueued()
+			return
+		}
+		r.db.UpdateTaskWorkingBranch(nextTask.ID, branchName)
+		nextTask.WorkingBranch = branchName
+	}
+
+	// Broadcast status update
+	updatedTask, _ := r.db.GetTask(nextTask.ID)
+	if updatedTask != nil {
+		// Ensure projectDir is set (it's not stored in DB, derived from project)
+		if updatedTask.ProjectDir == "" {
+			updatedTask.ProjectDir = projectDir
+		}
+		r.hub.BroadcastTaskUpdate(updatedTask)
+	} else {
+		// Fallback to nextTask if DB fetch failed
+		updatedTask = nextTask
+		updatedTask.ProjectDir = projectDir
+	}
+
+	// Get config and start RALPH
+	config, _ := r.db.GetConfig()
+	go r.Start(updatedTask, config)
 }

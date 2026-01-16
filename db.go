@@ -283,6 +283,41 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 6 completed")
 	}
 
+	// ========== Migration 7: Queue and Process tracking fields ==========
+	if version < 7 {
+		log.Println("Running migration 7: Adding queue and process tracking fields to tasks")
+
+		newColumns := []struct {
+			name string
+			def  string
+		}{
+			{"queue_position", "INTEGER DEFAULT 0"},    // Position in queue (0 = not queued)
+			{"process_pid", "INTEGER DEFAULT 0"},       // PID of running Claude process
+			{"process_status", "TEXT DEFAULT 'idle'"},  // idle, running, finished, error
+			{"started_at", "DATETIME"},                 // When RALPH started
+			{"finished_at", "DATETIME"},                // When RALPH finished
+		}
+
+		for _, col := range newColumns {
+			query := "ALTER TABLE tasks ADD COLUMN " + col.name + " " + col.def
+			if _, err := d.db.Exec(query); err != nil {
+				log.Printf("Note: Column tasks.%s may already exist: %v", col.name, err)
+			}
+		}
+
+		// Create index for efficient queue queries
+		_, err := d.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_queue ON tasks(status, queue_position) WHERE status = 'queued'`)
+		if err != nil {
+			log.Printf("Note: Index idx_tasks_queue may already exist: %v", err)
+		}
+
+		_, err = d.db.Exec("INSERT INTO schema_version (version) VALUES (7)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 7 completed")
+	}
+
 	return nil
 }
 
@@ -302,6 +337,8 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
+		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
+		       t.started_at, t.finished_at,
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -317,16 +354,25 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		var t Task
 		var ttID, ttName, ttColor sql.NullString
 		var ttIsSystem sql.NullBool
+		var startedAt, finishedAt sql.NullTime
 		err := rows.Scan(
 			&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
 			&t.ConflictPRURL, &t.ConflictPRNumber,
+			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
+			&startedAt, &finishedAt,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if startedAt.Valid {
+			t.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			t.FinishedAt = &finishedAt.Time
 		}
 		// Task-Typ hinzufügen falls vorhanden
 		if ttID.Valid && ttID.String != "" {
@@ -352,12 +398,15 @@ func (d *Database) GetTask(id string) (*Task, error) {
 	var t Task
 	var ttID, ttName, ttColor sql.NullString
 	var ttIsSystem sql.NullBool
+	var startedAt, finishedAt sql.NullTime
 	err := d.db.QueryRow(`
 		SELECT t.id, t.title, t.description, t.acceptance_criteria, t.status, t.priority,
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
+		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
+		       t.started_at, t.finished_at,
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -368,6 +417,8 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
 		&t.ConflictPRURL, &t.ConflictPRNumber,
+		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
+		&startedAt, &finishedAt,
 		&ttID, &ttName, &ttColor, &ttIsSystem,
 	)
 	if err == sql.ErrNoRows {
@@ -375,6 +426,12 @@ func (d *Database) GetTask(id string) (*Task, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if startedAt.Valid {
+		t.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		t.FinishedAt = &finishedAt.Time
 	}
 	if ttID.Valid && ttID.String != "" {
 		t.TaskType = &TaskType{
@@ -398,6 +455,8 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
+		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
+		       t.started_at, t.finished_at,
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -414,16 +473,25 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		var t Task
 		var ttID, ttName, ttColor sql.NullString
 		var ttIsSystem sql.NullBool
+		var startedAt, finishedAt sql.NullTime
 		err := rows.Scan(
 			&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
 			&t.ConflictPRURL, &t.ConflictPRNumber,
+			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
+			&startedAt, &finishedAt,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if startedAt.Valid {
+			t.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			t.FinishedAt = &finishedAt.Time
 		}
 		if ttID.Valid && ttID.String != "" {
 			t.TaskType = &TaskType{
@@ -679,6 +747,264 @@ func (d *Database) MarkRunningTasksAsBlocked(reason string) error {
 		WHERE status = ?
 	`, StatusBlocked, reason, time.Now(), StatusProgress)
 	return err
+}
+
+// ============================================================================
+// Queue and Process Tracking Operations
+// ============================================================================
+
+// GetQueuedTasks returns all queued tasks ordered by position.
+func (d *Database) GetQueuedTasks() ([]Task, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query(`
+		SELECT id, title, description, acceptance_criteria, status, priority,
+		       current_iteration, max_iterations, logs, error, project_dir,
+		       created_at, updated_at,
+		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
+		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
+		       started_at, finished_at
+		FROM tasks
+		WHERE status = 'queued' AND queue_position > 0
+		ORDER BY queue_position ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		var startedAt, finishedAt sql.NullTime
+		err := rows.Scan(
+			&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
+			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
+			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
+			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.ConflictPRURL, &t.ConflictPRNumber,
+			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
+			&startedAt, &finishedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if startedAt.Valid {
+			t.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			t.FinishedAt = &finishedAt.Time
+		}
+		tasks = append(tasks, t)
+	}
+
+	return tasks, rows.Err()
+}
+
+// GetNextQueuedTask returns the task at position 1 in the queue.
+func (d *Database) GetNextQueuedTask() (*Task, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var t Task
+	var startedAt, finishedAt sql.NullTime
+	err := d.db.QueryRow(`
+		SELECT id, title, description, acceptance_criteria, status, priority,
+		       current_iteration, max_iterations, logs, error, project_dir,
+		       created_at, updated_at,
+		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
+		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
+		       started_at, finished_at
+		FROM tasks
+		WHERE status = 'queued' AND queue_position > 0
+		ORDER BY queue_position ASC
+		LIMIT 1
+	`).Scan(
+		&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
+		&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
+		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
+		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+		&t.ConflictPRURL, &t.ConflictPRNumber,
+		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
+		&startedAt, &finishedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if startedAt.Valid {
+		t.StartedAt = &startedAt.Time
+	}
+	if finishedAt.Valid {
+		t.FinishedAt = &finishedAt.Time
+	}
+	return &t, nil
+}
+
+// HasTaskInProgress checks if any task is currently in progress.
+func (d *Database) HasTaskInProgress() (bool, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var count int
+	err := d.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'progress'`).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// GetMaxQueuePosition returns the current maximum queue position.
+func (d *Database) GetMaxQueuePosition() (int, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var maxPos sql.NullInt64
+	err := d.db.QueryRow(`SELECT MAX(queue_position) FROM tasks WHERE status = 'queued'`).Scan(&maxPos)
+	if err != nil {
+		return 0, err
+	}
+	if !maxPos.Valid {
+		return 0, nil
+	}
+	return int(maxPos.Int64), nil
+}
+
+// AddToQueue adds a task to the queue with the next position.
+func (d *Database) AddToQueue(taskID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Get the next position
+	var maxPos sql.NullInt64
+	err := d.db.QueryRow(`SELECT MAX(queue_position) FROM tasks WHERE status = 'queued'`).Scan(&maxPos)
+	if err != nil {
+		return err
+	}
+	nextPos := 1
+	if maxPos.Valid {
+		nextPos = int(maxPos.Int64) + 1
+	}
+
+	_, err = d.db.Exec(`
+		UPDATE tasks SET queue_position = ?, status = 'queued', updated_at = ? WHERE id = ?
+	`, nextPos, time.Now(), taskID)
+	return err
+}
+
+// RemoveFromQueue removes a task from the queue and reorders remaining tasks.
+func (d *Database) RemoveFromQueue(taskID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Get current position
+	var currentPos int
+	err := d.db.QueryRow(`SELECT COALESCE(queue_position, 0) FROM tasks WHERE id = ?`, taskID).Scan(&currentPos)
+	if err != nil {
+		return err
+	}
+
+	// Clear the task's queue position
+	_, err = d.db.Exec(`UPDATE tasks SET queue_position = 0, updated_at = ? WHERE id = ?`, time.Now(), taskID)
+	if err != nil {
+		return err
+	}
+
+	// Reorder remaining tasks if this task had a position
+	if currentPos > 0 {
+		_, err = d.db.Exec(`
+			UPDATE tasks SET queue_position = queue_position - 1, updated_at = ?
+			WHERE status = 'queued' AND queue_position > ?
+		`, time.Now(), currentPos)
+	}
+	return err
+}
+
+// UpdateTaskProcessInfo updates the PID and process status of a task.
+func (d *Database) UpdateTaskProcessInfo(id string, pid int, status string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET process_pid = ?, process_status = ?, updated_at = ? WHERE id = ?
+	`, pid, status, time.Now(), id)
+	return err
+}
+
+// UpdateTaskStartedAt sets the started_at timestamp for a task.
+func (d *Database) UpdateTaskStartedAt(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET started_at = ?, updated_at = ? WHERE id = ?
+	`, time.Now(), time.Now(), id)
+	return err
+}
+
+// UpdateTaskFinishedAt sets the finished_at timestamp for a task.
+func (d *Database) UpdateTaskFinishedAt(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET finished_at = ?, updated_at = ? WHERE id = ?
+	`, time.Now(), time.Now(), id)
+	return err
+}
+
+// GetTasksWithRunningProcess returns tasks that have a non-zero PID.
+func (d *Database) GetTasksWithRunningProcess() ([]Task, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query(`
+		SELECT id, title, description, acceptance_criteria, status, priority,
+		       current_iteration, max_iterations, logs, error, project_dir,
+		       created_at, updated_at,
+		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
+		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
+		       started_at, finished_at
+		FROM tasks
+		WHERE process_pid > 0
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		var startedAt, finishedAt sql.NullTime
+		err := rows.Scan(
+			&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
+			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
+			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
+			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.ConflictPRURL, &t.ConflictPRNumber,
+			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
+			&startedAt, &finishedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if startedAt.Valid {
+			t.StartedAt = &startedAt.Time
+		}
+		if finishedAt.Valid {
+			t.FinishedAt = &finishedAt.Time
+		}
+		tasks = append(tasks, t)
+	}
+
+	return tasks, rows.Err()
 }
 
 // ============================================================================

@@ -20,6 +20,10 @@ $(document).ready(function() {
     let collapsedFolders = {}; // Track collapsed state of folders
     let githubUser = null; // GitHub user info (username, avatar_url, etc.)
     let sidebarOpen = false; // Track sidebar state
+    let pendingAttachments = []; // Files queued for upload before task is saved
+    let activeMobileTab = 'backlog'; // Active tab for mobile view
+    let currentAttachments = []; // Attachments for current task
+    let lightboxIndex = 0; // Current lightbox image index
 
     // Initialize
     init();
@@ -460,6 +464,7 @@ $(document).ready(function() {
         setupEventListeners();
         setupDragAndDrop();
         setupSidebarResize();
+        setupMobileTabNavigation();
 
         // Remove no-transitions class after initial load to enable smooth theme transitions
         // Use a small delay to ensure all initial rendering is complete
@@ -540,6 +545,12 @@ $(document).ready(function() {
                 tasks[idx] = task;
                 renderAllTasks();
             }
+
+            // Upload pending attachments for new tasks
+            if (isNew && pendingAttachments.length > 0) {
+                uploadPendingAttachments(task.id);
+            }
+
             closeModal();
             showToast(isNew ? 'Task created' : 'Task saved', 'success');
         })
@@ -578,7 +589,10 @@ $(document).ready(function() {
             if (idx !== -1) tasks[idx] = task;
             renderAllTasks();
 
-            if (newStatus === 'progress') {
+            // Check if task was redirected to queue (requested progress but got queued)
+            if (newStatus === 'progress' && task.status === 'queued') {
+                showToast('Task is running. Added to queue at position ' + task.queue_position, 'info');
+            } else if (newStatus === 'progress') {
                 openEditTaskModal(task);
             }
         })
@@ -919,9 +933,21 @@ $(document).ready(function() {
             case 'log':
                 appendLog(msg.task_id, msg.message);
                 break;
-            case 'status':
-                updateStatusBadge(msg.task_id, msg.status, msg.iteration);
+            case 'status': {
+                // Update local task status and re-render if status changed
+                const statusTask = tasks.find(t => t.id === msg.task_id);
+                if (statusTask && statusTask.status !== msg.status) {
+                    statusTask.status = msg.status;
+                    if (msg.iteration !== undefined) {
+                        statusTask.current_iteration = msg.iteration;
+                    }
+                    renderAllTasks();
+                } else {
+                    // Just update badge if status didn't change (e.g., iteration update)
+                    updateStatusBadge(msg.task_id, msg.status, msg.iteration);
+                }
                 break;
+            }
             case 'task_updated':
                 updateTask(msg.task);
                 break;
@@ -1958,19 +1984,48 @@ git rebase --continue
 
     function updateStatusBadge(taskId, status, iteration) {
         const $card = $(`.task-card[data-id="${taskId}"]`);
-        const $badge = $card.find('.status-badge');
+        let $badge = $card.find('.status-badge');
+        const $footer = $card.find('.task-card-footer');
 
-        if (status === 'progress' && iteration > 0) {
-            if ($badge.length === 0) {
-                $card.find('.task-card-footer').prepend(
-                    `<span class="status-badge running">Iteration ${iteration}</span>`
-                );
-            } else {
-                $badge.text('Iteration ' + iteration);
-            }
+        // Build new badge based on status
+        let newBadgeHtml = '';
+        let newBadgeClass = '';
+        let newBadgeText = '';
+
+        if (status === 'progress') {
+            newBadgeClass = 'running';
+            newBadgeText = iteration > 0 ? `Iteration ${iteration}` : 'Running...';
+        } else if (status === 'queued') {
+            // Queue position badge handled separately in createTaskCard
+            newBadgeClass = 'queued';
+            newBadgeText = 'QUEUED';
+        } else if (status === 'review') {
+            newBadgeClass = 'review';
+            newBadgeText = 'REVIEW';
+        } else if (status === 'done') {
+            newBadgeClass = 'done';
+            newBadgeText = 'DONE';
+        } else if (status === 'blocked') {
+            newBadgeClass = 'blocked';
+            newBadgeText = 'BLOCKED';
         }
 
-        if (currentTaskId === taskId) {
+        // Update or create badge
+        if (newBadgeClass) {
+            if ($badge.length === 0) {
+                $footer.prepend(`<span class="status-badge ${newBadgeClass}">${newBadgeText}</span>`);
+            } else {
+                $badge.removeClass('running queued review done blocked')
+                      .addClass(newBadgeClass)
+                      .text(newBadgeText);
+            }
+        } else if ($badge.length > 0) {
+            // No badge needed (e.g., backlog) - remove existing
+            $badge.remove();
+        }
+
+        // Update modal badge if this task is open
+        if (currentTaskId === taskId && status === 'progress') {
             $('#iterationBadge').text('Iteration ' + iteration);
         }
     }
@@ -2017,7 +2072,7 @@ git rebase --continue
 
     // Rendering
     function renderAllTasks() {
-        const statuses = ['backlog', 'progress', 'review', 'done', 'blocked'];
+        const statuses = ['backlog', 'queued', 'progress', 'review', 'done', 'blocked'];
         statuses.forEach(function(status) {
             const $container = $(`.column[data-status="${status}"] .tasks-container`);
             $container.empty();
@@ -2029,10 +2084,65 @@ git rebase --continue
                 statusTasks = statusTasks.filter(t => t.project_id === selectedProjectFilter);
             }
 
+            // Sort queued tasks by queue position
+            if (status === 'queued') {
+                statusTasks.sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
+            }
+
             statusTasks.forEach(function(task) {
                 $container.append(createTaskCard(task));
             });
+
+            // Update mobile tab counts
+            $(`.mobile-tab-count[data-count="${status}"]`).text(statusTasks.length);
         });
+    }
+
+    // ============================================================================
+    // Mobile Tab Navigation
+    // ============================================================================
+
+    function setupMobileTabNavigation() {
+        // Handle mobile tab clicks
+        $(document).on('click', '.mobile-tab', function() {
+            const status = $(this).data('status');
+            switchMobileTab(status);
+        });
+
+        // Initialize: ensure backlog is active
+        switchMobileTab('backlog');
+    }
+
+    function switchMobileTab(status) {
+        activeMobileTab = status;
+
+        // Update tab active states
+        $('.mobile-tab').removeClass('active');
+        $(`.mobile-tab[data-status="${status}"]`).addClass('active');
+
+        // Update column visibility
+        $('.column').removeClass('mobile-active');
+        $(`.column[data-status="${status}"]`).addClass('mobile-active');
+
+        // Scroll active tab into view
+        const $activeTab = $(`.mobile-tab[data-status="${status}"]`);
+        if ($activeTab.length) {
+            const container = document.getElementById('mobileColumnTabs');
+            const tab = $activeTab[0];
+            if (container && tab) {
+                const containerRect = container.getBoundingClientRect();
+                const tabRect = tab.getBoundingClientRect();
+
+                if (tabRect.left < containerRect.left || tabRect.right > containerRect.right) {
+                    tab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+                }
+            }
+        }
+    }
+
+    // Check if we're on mobile (matches CSS breakpoint)
+    function isMobileView() {
+        return window.innerWidth < 768;
     }
 
     // Build dropdown menu items based on task state
@@ -2059,13 +2169,61 @@ git rebase --continue
         const taskType = task.task_type || taskTypes.find(t => t.id === task.task_type_id);
         const typeBadge = taskType ?
             `<span class="task-type-badge" style="background-color: ${taskType.color}">${escapeHtml(taskType.name)}</span>` : '';
-        // Show shortened branch name with full name in tooltip
-        let branchBadge = '';
+
+        // Build status badge HTML
+        let statusBadge = '';
+        if (task.status === 'progress') {
+            const badgeText = task.current_iteration > 0
+                ? `Iteration ${task.current_iteration}`
+                : 'Running...';
+            statusBadge = `<span class="status-badge running">${badgeText}</span>`;
+        } else if (task.status === 'queued') {
+            const queuePos = task.queue_position || '?';
+            statusBadge = `<span class="status-badge queued"><span class="queue-position-badge">${queuePos}</span> QUEUED</span>`;
+        } else if (task.status === 'review') {
+            statusBadge = `<span class="status-badge review">REVIEW</span>`;
+        } else if (task.status === 'done') {
+            statusBadge = `<span class="status-badge done">DONE</span>`;
+        } else if (task.status === 'blocked') {
+            statusBadge = `<span class="status-badge blocked">BLOCKED</span>`;
+        }
+
+        // Build branch row HTML (only if task has a branch)
+        let branchRowHtml = '';
         if (task.working_branch) {
-            const shortBranch = task.working_branch.length > 20
-                ? task.working_branch.substring(0, 17) + '...'
+            const maxBranchLength = 30;
+            const shortBranch = task.working_branch.length > maxBranchLength
+                ? task.working_branch.substring(0, maxBranchLength - 3) + '...'
                 : task.working_branch;
-            branchBadge = `<span class="task-branch-badge" title="${escapeHtml(task.working_branch)}"><svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg><span class="branch-name">${escapeHtml(shortBranch)}</span></span>`;
+
+            // Get GitHub URL from the task's project
+            const project = task.project_id ? projects.find(p => p.id === task.project_id) : null;
+            const githubUrl = project?.github_url;
+            // Note: Don't use encodeURIComponent for branch names as GitHub expects slashes to remain as-is
+            const branchUrl = githubUrl ? `${githubUrl}/tree/${task.working_branch}` : null;
+
+            const branchIcon = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
+
+            if (branchUrl) {
+                branchRowHtml = `
+                    <div class="task-card-branch">
+                        <a href="${escapeHtml(branchUrl)}" target="_blank" class="branch-link" title="${escapeHtml(task.working_branch)}">
+                            ${branchIcon}
+                            <span class="branch-name">${escapeHtml(shortBranch)}</span>
+                            <svg class="external-link-icon" viewBox="0 0 16 16" fill="currentColor" width="10" height="10">
+                                <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>
+                            </svg>
+                        </a>
+                    </div>`;
+            } else {
+                branchRowHtml = `
+                    <div class="task-card-branch">
+                        <span class="branch-label" title="${escapeHtml(task.working_branch)}">
+                            ${branchIcon}
+                            <span class="branch-name">${escapeHtml(shortBranch)}</span>
+                        </span>
+                    </div>`;
+            }
         }
 
         // Build dropdown menu items
@@ -2083,6 +2241,14 @@ git rebase --continue
             </div>
         ` : '';
 
+        // Build the card with new layout structure
+        // - Header: priority + title
+        // - Badge row: type badge (left) + status badge (right)
+        // - Branch row: branch link (only if branch exists)
+        // - Footer: LIVE button and attachment badge
+        const badgeRowHtml = (typeBadge || statusBadge) ?
+            `<div class="task-card-badges">${typeBadge}<div class="badge-spacer"></div>${statusBadge}</div>` : '';
+
         const $card = $(`
             <div class="task-card" data-id="${task.id}" draggable="true">
                 ${dropdownHtml}
@@ -2090,26 +2256,16 @@ git rebase --continue
                     <div class="priority-indicator priority-${task.priority}"></div>
                     <span class="task-title">${escapeHtml(task.title)}</span>
                 </div>
-                ${(typeBadge || branchBadge) ? `<div class="task-card-meta">${typeBadge}${branchBadge}</div>` : ''}
+                ${badgeRowHtml}
+                ${branchRowHtml}
                 <div class="task-card-footer"></div>
             </div>
         `);
 
+        // Add LIVE button for running tasks
         if (task.status === 'progress') {
-            const badgeText = task.current_iteration > 0
-                ? `Iteration ${task.current_iteration}`
-                : 'Running...';
-            $card.find('.task-card-footer').prepend(
-                `<span class="status-badge running">${badgeText}</span>`
-            );
             $card.find('.task-card-footer').append(
                 `<button class="btn-live" data-id="${task.id}">LIVE</button>`
-            );
-        }
-
-        if (task.status === 'blocked') {
-            $card.find('.task-card-footer').append(
-                '<span class="blocked-icon">&#9888;</span>'
             );
         }
 
@@ -2123,6 +2279,11 @@ git rebase --continue
                     ${task.attachments.length}
                 </span>
             `);
+        }
+
+        // Hide footer if empty
+        if ($card.find('.task-card-footer').children().length === 0) {
+            $card.find('.task-card-footer').addClass('hidden');
         }
 
         // Show conflict section if task has a conflict PR open
@@ -2570,9 +2731,15 @@ git rebase --continue
             if ($(e.target).hasClass('btn-merge') || $(e.target).closest('.btn-merge').length) return;
             if ($(e.target).closest('.merge-conflict-section').length) return;
             if ($(e.target).closest('.task-card-actions').length) return;
+            // Don't open modal when clicking branch link (let link open in new tab)
+            if ($(e.target).closest('.branch-link').length) return;
             const taskId = $(this).data('id');
             const task = tasks.find(t => t.id === taskId);
-            if (task) openEditTaskModal(task);
+            if (task) {
+                openEditTaskModal(task);
+            } else {
+                console.warn('Task not found in tasks array:', taskId);
+            }
         });
 
         // LIVE button click
@@ -3067,6 +3234,11 @@ git rebase --continue
                 task.status = newStatus;
                 renderAllTasks();
                 updateTaskStatus(taskId, newStatus);
+
+                // On mobile, switch to the target column
+                if (isMobileView()) {
+                    switchMobileTab(newStatus);
+                }
             }
         });
 
@@ -3326,6 +3498,7 @@ git rebase --continue
     function closeModal() {
         $('#taskModal').removeClass('active');
         currentTaskId = null;
+        clearPendingAttachments(); // Clear any pending attachments when modal closes
         stopTimestampUpdates(); // Stop updating timestamps when modal closes
     }
 
@@ -4266,9 +4439,6 @@ git rebase --continue
     // ATTACHMENT HANDLING
     // ============================================================================
 
-    let currentAttachments = [];
-    let lightboxIndex = 0;
-
     // Load attachments for a task
     function loadAttachments(taskId) {
         currentAttachments = [];
@@ -4488,11 +4658,6 @@ git rebase --continue
 
     // Handle file upload
     function handleFileUpload(files) {
-        if (!currentTaskId) {
-            showToast('Please save the task first before uploading attachments', 'warning');
-            return;
-        }
-
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
 
@@ -4509,13 +4674,89 @@ git rebase --continue
                 continue;
             }
 
-            uploadFile(file, currentTaskId);
+            if (currentTaskId) {
+                // Upload immediately for existing tasks
+                uploadFile(file, currentTaskId);
+            } else {
+                // Add to pending list for new tasks
+                addPendingAttachment(file);
+            }
         }
+    }
+
+    // Add file to pending attachments list (for new tasks before save)
+    function addPendingAttachment(file) {
+        // Create preview data URL
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const pendingItem = {
+                file: file,
+                name: file.name,
+                type: file.type,
+                size: file.size,
+                dataUrl: e.target.result
+            };
+            pendingAttachments.push(pendingItem);
+            renderPendingAttachments();
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // Render pending attachments preview
+    function renderPendingAttachments() {
+        const $list = $('#pendingAttachmentList');
+        $list.empty();
+
+        pendingAttachments.forEach((item, index) => {
+            const isImage = item.type.startsWith('image/');
+            const isVideo = item.type.startsWith('video/');
+
+            let preview = '';
+            if (isImage) {
+                preview = `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}">`;
+            } else if (isVideo) {
+                preview = `<video src="${item.dataUrl}" muted></video>`;
+            }
+
+            $list.append(`
+                <div class="attachment-item" data-index="${index}">
+                    ${preview}
+                    <button class="attachment-delete pending-delete" data-index="${index}">&times;</button>
+                    <div class="attachment-name">${escapeHtml(item.name)}</div>
+                </div>
+            `);
+        });
+    }
+
+    // Clear pending attachments
+    function clearPendingAttachments() {
+        pendingAttachments = [];
+        $('#pendingAttachmentList').empty();
+    }
+
+    // Upload pending attachments after task is created
+    function uploadPendingAttachments(taskId) {
+        if (pendingAttachments.length === 0) return;
+
+        pendingAttachments.forEach(item => {
+            uploadFile(item.file, taskId);
+        });
+
+        clearPendingAttachments();
     }
 
     // Delete attachment button
     $(document).on('click', '.attachment-delete', function(e) {
         e.stopPropagation();
+
+        // Check if this is a pending attachment delete
+        if ($(this).hasClass('pending-delete')) {
+            const index = $(this).data('index');
+            pendingAttachments.splice(index, 1);
+            renderPendingAttachments();
+            return;
+        }
+
         const attachmentId = $(this).data('id');
         if (currentTaskId && confirm('Delete this attachment?')) {
             deleteAttachment(attachmentId, currentTaskId);
@@ -4538,6 +4779,226 @@ git rebase --continue
     $('#lightbox').on('click', function(e) {
         if (e.target === this) {
             closeLightbox();
+        }
+    });
+
+    // ============================================================================
+    // GLOBAL SEARCH (Cmd+K / Ctrl+K)
+    // ============================================================================
+
+    let searchSelectedIndex = -1;
+    let searchFilteredTasks = [];
+
+    // Open search modal
+    function openSearch() {
+        $('#searchInput').val('');
+        $('#searchResults').empty();
+        $('#searchEmpty').addClass('hidden');
+        searchSelectedIndex = -1;
+        searchFilteredTasks = [];
+        $('#searchModal').addClass('active');
+        // Focus input after modal opens
+        setTimeout(() => $('#searchInput').focus(), 50);
+    }
+
+    // Close search modal
+    function closeSearch() {
+        $('#searchModal').removeClass('active');
+        searchSelectedIndex = -1;
+        searchFilteredTasks = [];
+    }
+
+    // Get project name by ID for search
+    function getProjectNameForSearch(projectId) {
+        if (!projectId) return 'No project';
+        const project = projects.find(p => p.id === projectId);
+        return project ? project.name : 'Unknown';
+    }
+
+    // Get task type info by ID for search
+    function getTaskTypeInfoForSearch(taskTypeId) {
+        if (!taskTypeId) return null;
+        return taskTypes.find(t => t.id === taskTypeId);
+    }
+
+    // Filter and render search results
+    function filterSearch(query) {
+        const $results = $('#searchResults');
+        const $empty = $('#searchEmpty');
+        $results.empty();
+
+        const normalizedQuery = query.toLowerCase().trim();
+
+        if (!normalizedQuery) {
+            $empty.addClass('hidden');
+            searchFilteredTasks = [];
+            searchSelectedIndex = -1;
+            return;
+        }
+
+        // Search in title, description, and task type name
+        searchFilteredTasks = tasks.filter(task => {
+            const title = (task.title || '').toLowerCase();
+            const description = (task.description || '').toLowerCase();
+            const taskType = getTaskTypeInfoForSearch(task.task_type_id);
+            const taskTypeName = taskType ? taskType.name.toLowerCase() : '';
+
+            return title.includes(normalizedQuery) ||
+                   description.includes(normalizedQuery) ||
+                   taskTypeName.includes(normalizedQuery);
+        });
+
+        // Limit to 10 results
+        searchFilteredTasks = searchFilteredTasks.slice(0, 10);
+
+        if (searchFilteredTasks.length === 0) {
+            $empty.removeClass('hidden');
+            searchSelectedIndex = -1;
+            return;
+        }
+
+        $empty.addClass('hidden');
+        searchSelectedIndex = 0;
+
+        // Render results
+        searchFilteredTasks.forEach((task, index) => {
+            const taskType = getTaskTypeInfoForSearch(task.task_type_id);
+            const projectName = getProjectNameForSearch(task.project_id);
+
+            // Build type badge if task type exists
+            let typeBadge = '';
+            if (taskType) {
+                const typeColor = taskType.color || '#8b949e';
+                typeBadge = `<span class="search-result-type" style="color: ${typeColor}; border: 1px solid ${typeColor}33;">${escapeHtml(taskType.name)}</span>`;
+            }
+
+            const selectedClass = index === 0 ? 'selected' : '';
+            const statusLabel = task.status === 'progress' ? 'In Progress' : task.status;
+
+            $results.append(`
+                <div class="search-result-item ${selectedClass}" data-task-id="${task.id}" data-index="${index}">
+                    <div class="search-result-content">
+                        <div class="search-result-title">${escapeHtml(task.title)}</div>
+                        <div class="search-result-meta">
+                            <span class="search-result-project">${escapeHtml(projectName)}</span>
+                        </div>
+                    </div>
+                    <div class="search-result-badges">
+                        ${typeBadge}
+                        <span class="search-result-status ${task.status}">${statusLabel}</span>
+                    </div>
+                </div>
+            `);
+        });
+    }
+
+    // Update selected result highlight
+    function updateSearchSelection() {
+        $('.search-result-item').removeClass('selected');
+        if (searchSelectedIndex >= 0 && searchSelectedIndex < searchFilteredTasks.length) {
+            const $item = $(`.search-result-item[data-index="${searchSelectedIndex}"]`);
+            $item.addClass('selected');
+            // Scroll into view if needed
+            const container = $('#searchResults')[0];
+            const item = $item[0];
+            if (item && container) {
+                const itemTop = item.offsetTop;
+                const itemBottom = itemTop + item.offsetHeight;
+                const containerTop = container.scrollTop;
+                const containerBottom = containerTop + container.clientHeight;
+
+                if (itemTop < containerTop) {
+                    container.scrollTop = itemTop;
+                } else if (itemBottom > containerBottom) {
+                    container.scrollTop = itemBottom - container.clientHeight;
+                }
+            }
+        }
+    }
+
+    // Open task from search result
+    function openSearchResult(index) {
+        if (index >= 0 && index < searchFilteredTasks.length) {
+            const task = searchFilteredTasks[index];
+            closeSearch();
+            openEditTaskModal(task);
+            $('#taskModal').addClass('active');
+        }
+    }
+
+    // Global keyboard shortcut for Cmd+K / Ctrl+K
+    $(document).on('keydown', function(e) {
+        // Cmd+K (Mac) or Ctrl+K (Windows/Linux)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+            e.preventDefault();
+            if ($('#searchModal').hasClass('active')) {
+                closeSearch();
+            } else {
+                openSearch();
+            }
+            return;
+        }
+
+        // Only handle these keys when search modal is open
+        if (!$('#searchModal').hasClass('active')) return;
+
+        // Escape to close
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeSearch();
+            return;
+        }
+
+        // Arrow down to move selection down
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (searchFilteredTasks.length > 0) {
+                searchSelectedIndex = Math.min(searchSelectedIndex + 1, searchFilteredTasks.length - 1);
+                updateSearchSelection();
+            }
+            return;
+        }
+
+        // Arrow up to move selection up
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (searchFilteredTasks.length > 0) {
+                searchSelectedIndex = Math.max(searchSelectedIndex - 1, 0);
+                updateSearchSelection();
+            }
+            return;
+        }
+
+        // Enter to open selected result
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            openSearchResult(searchSelectedIndex);
+            return;
+        }
+    });
+
+    // Search input handler
+    $('#searchInput').on('input', function() {
+        const query = $(this).val();
+        filterSearch(query);
+    });
+
+    // Click on search result
+    $(document).on('click', '.search-result-item', function() {
+        const index = $(this).data('index');
+        openSearchResult(index);
+    });
+
+    // Hover on search result to update selection
+    $(document).on('mouseenter', '.search-result-item', function() {
+        searchSelectedIndex = $(this).data('index');
+        updateSearchSelection();
+    });
+
+    // Click outside search modal content to close
+    $('#searchModal').on('click', function(e) {
+        if (e.target === this) {
+            closeSearch();
         }
     });
 });
