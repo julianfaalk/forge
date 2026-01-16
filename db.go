@@ -373,6 +373,22 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 9 completed")
 	}
 
+	// ========== Migration 10: Target Branch for Tasks ==========
+	if version < 10 {
+		log.Println("Running migration 10: Adding target_branch field to tasks")
+
+		_, err := d.db.Exec("ALTER TABLE tasks ADD COLUMN target_branch TEXT DEFAULT ''")
+		if err != nil {
+			log.Printf("Note: Column tasks.target_branch may already exist: %v", err)
+		}
+
+		_, err = d.db.Exec("INSERT INTO schema_version (version) VALUES (10)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 10 completed")
+	}
+
 	return nil
 }
 
@@ -391,6 +407,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
+		       COALESCE(t.target_branch, ''),
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
@@ -417,6 +434,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.TargetBranch,
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
@@ -463,6 +481,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
+		       COALESCE(t.target_branch, ''),
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
@@ -477,6 +496,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+		&t.TargetBranch,
 		&t.ConflictPRURL, &t.ConflictPRNumber,
 		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 		&startedAt, &finishedAt,
@@ -517,6 +537,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
 		       t.created_at, t.updated_at,
 		       COALESCE(t.project_id, ''), COALESCE(t.task_type_id, ''), COALESCE(t.working_branch, ''),
+		       COALESCE(t.target_branch, ''),
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
@@ -544,6 +565,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.TargetBranch,
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
@@ -592,6 +614,7 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		ProjectDir:         req.ProjectDir,
 		ProjectID:          req.ProjectID,
 		TaskTypeID:         req.TaskTypeID,
+		TargetBranch:       req.TargetBranch,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
@@ -611,13 +634,13 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		INSERT INTO tasks (id, title, description, acceptance_criteria, status,
 		                   priority, current_iteration, max_iterations, logs,
 		                   error, project_dir, project_id, task_type_id, working_branch,
-		                   created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   target_branch, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		task.ID, task.Title, task.Description, task.AcceptanceCriteria,
 		task.Status, task.Priority, task.CurrentIteration, task.MaxIterations,
 		task.Logs, task.Error, task.ProjectDir, task.ProjectID, task.TaskTypeID,
-		task.WorkingBranch, task.CreatedAt, task.UpdatedAt,
+		task.WorkingBranch, task.TargetBranch, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -639,6 +662,7 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		       current_iteration, max_iterations, logs, error, project_dir,
 		       created_at, updated_at,
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(target_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0)
 		FROM tasks WHERE id = ?
 	`, id).Scan(
@@ -646,6 +670,7 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+		&t.TargetBranch,
 		&t.ConflictPRURL, &t.ConflictPRNumber,
 	)
 	if err == sql.ErrNoRows {
@@ -686,18 +711,21 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 	if req.WorkingBranch != nil {
 		t.WorkingBranch = *req.WorkingBranch
 	}
+	if req.TargetBranch != nil {
+		t.TargetBranch = *req.TargetBranch
+	}
 	t.UpdatedAt = time.Now()
 
 	_, err = d.db.Exec(`
 		UPDATE tasks SET
 			title = ?, description = ?, acceptance_criteria = ?, status = ?,
 			priority = ?, max_iterations = ?, project_dir = ?,
-			project_id = ?, task_type_id = ?, working_branch = ?, updated_at = ?
+			project_id = ?, task_type_id = ?, working_branch = ?, target_branch = ?, updated_at = ?
 		WHERE id = ?
 	`,
 		t.Title, t.Description, t.AcceptanceCriteria, t.Status,
 		t.Priority, t.MaxIterations, t.ProjectDir,
-		t.ProjectID, t.TaskTypeID, t.WorkingBranch, t.UpdatedAt, t.ID,
+		t.ProjectID, t.TaskTypeID, t.WorkingBranch, t.TargetBranch, t.UpdatedAt, t.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -830,6 +858,7 @@ func (d *Database) GetQueuedTasks() ([]Task, error) {
 		       current_iteration, max_iterations, logs, error, project_dir,
 		       created_at, updated_at,
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(target_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
 		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
 		       started_at, finished_at,
@@ -852,6 +881,7 @@ func (d *Database) GetQueuedTasks() ([]Task, error) {
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 			&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 			&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+			&t.TargetBranch,
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
@@ -884,6 +914,7 @@ func (d *Database) GetNextQueuedTask() (*Task, error) {
 		       current_iteration, max_iterations, logs, error, project_dir,
 		       created_at, updated_at,
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
+		       COALESCE(target_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
 		       COALESCE(queue_position, 0), COALESCE(process_pid, 0), COALESCE(process_status, 'idle'),
 		       started_at, finished_at,
@@ -897,6 +928,7 @@ func (d *Database) GetNextQueuedTask() (*Task, error) {
 		&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
 		&t.Logs, &t.Error, &t.ProjectDir, &t.CreatedAt, &t.UpdatedAt,
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
+		&t.TargetBranch,
 		&t.ConflictPRURL, &t.ConflictPRNumber,
 		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 		&startedAt, &finishedAt,

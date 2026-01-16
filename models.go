@@ -49,7 +49,8 @@ type Task struct {
 	// Neue Felder für v2 - Verknüpfungen zu anderen Entitäten
 	ProjectID     string `json:"project_id,omitempty"`     // Verknüpftes Projekt
 	TaskTypeID    string `json:"task_type_id,omitempty"`   // Verknüpfter Task-Typ
-	WorkingBranch string `json:"working_branch,omitempty"` // Aktueller Git-Branch
+	WorkingBranch string `json:"working_branch,omitempty"` // Aktueller Git-Branch (zur Laufzeit)
+	TargetBranch  string `json:"target_branch,omitempty"`  // Ziel-Branch beim Task-Erstellen
 
 	// Conflict PR tracking - when merge fails and PR is created
 	ConflictPRURL    string `json:"conflict_pr_url,omitempty"`    // GitHub PR URL for conflict resolution
@@ -179,6 +180,7 @@ type CreateTaskRequest struct {
 	ProjectDir         string `json:"project_dir"`        // Optional, sonst aus Projekt oder Config
 	ProjectID          string `json:"project_id"`         // Optional: Projekt-Verknüpfung
 	TaskTypeID         string `json:"task_type_id"`       // Optional: Task-Typ
+	TargetBranch       string `json:"target_branch"`      // Optional: Ziel-Branch für den Task
 }
 
 // UpdateTaskRequest ist der Request-Body zum Aktualisieren eines Tasks.
@@ -194,6 +196,7 @@ type UpdateTaskRequest struct {
 	ProjectID          *string     `json:"project_id,omitempty"`
 	TaskTypeID         *string     `json:"task_type_id,omitempty"`
 	WorkingBranch      *string     `json:"working_branch,omitempty"`
+	TargetBranch       *string     `json:"target_branch,omitempty"`
 }
 
 // FeedbackRequest ist der Request-Body für Feedback an einen laufenden Task.
