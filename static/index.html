@@ -6,7 +6,7 @@
     <title>RUNNER - Autonomous Development Board</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
-    <!-- Theme initialization - MUST run before body renders to prevent flash -->
+    <!-- Theme and sidebar initialization - MUST run before body renders to prevent flash -->
     <script>
         (function() {
             try {
@@ -18,6 +18,15 @@
                 document.documentElement.setAttribute('data-theme', theme);
                 // Add no-transitions class to prevent initial flash
                 document.documentElement.classList.add('no-transitions');
+
+                // Load saved sidebar width for desktop (prevents flash)
+                var savedWidth = localStorage.getItem('runner-sidebar-width');
+                if (savedWidth) {
+                    var width = parseInt(savedWidth);
+                    if (width >= 200 && width <= 500) {
+                        document.documentElement.style.setProperty('--sidebar-width', width + 'px');
+                    }
+                }
             } catch (e) {
                 document.documentElement.setAttribute('data-theme', 'dark');
             }

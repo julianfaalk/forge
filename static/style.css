@@ -3744,6 +3744,7 @@ label {
     --badge-font-size: 0.7rem;
     --header-height: 60px;
     --mobile-tab-height: 48px;
+    --sidebar-width: 280px;
 }
 
 /* Mobile Column Tab Navigation - Container */
@@ -4559,5 +4560,78 @@ label {
 
     .search-modal-content {
         max-height: 70vh;
+    }
+}
+
+/* ============================================================================
+   DESKTOP BREAKPOINT (>1024px) - Static Sidebar with Resize
+   ============================================================================ */
+@media (min-width: 1025px) {
+    /* Header adjusts for static sidebar */
+    .header {
+        padding-left: calc(var(--sidebar-width, 280px) + 1rem);
+        transition: padding-left 0.15s ease;
+    }
+
+    /* App container includes static sidebar */
+    .app-container {
+        min-height: calc(100vh - var(--header-height, 60px));
+    }
+
+    /* Sidebar becomes static */
+    .sidebar {
+        position: fixed;
+        top: var(--header-height, 60px);
+        left: 0;
+        width: var(--sidebar-width, 280px);
+        height: calc(100vh - var(--header-height, 60px));
+        transform: translateX(0);
+        z-index: 100;
+        box-shadow: none;
+        transition: width 0.05s ease;
+        min-width: 200px;
+        max-width: 500px;
+    }
+
+    /* Hide sidebar toggle on desktop */
+    .sidebar-toggle {
+        display: none;
+    }
+
+    /* Sidebar overlay not needed on desktop */
+    .sidebar-overlay {
+        display: none !important;
+    }
+
+    /* Show resize handle on desktop */
+    .sidebar-resize-handle {
+        display: block;
+        position: fixed;
+        top: var(--header-height, 60px);
+        left: calc(var(--sidebar-width, 280px) - 3px);
+        width: 6px;
+        height: calc(100vh - var(--header-height, 60px));
+        background-color: transparent;
+        z-index: 101;
+        transition: left 0.05s ease, background-color 0.15s ease;
+    }
+
+    .sidebar-resize-handle:hover,
+    .sidebar-resize-handle.dragging {
+        background-color: var(--accent);
+    }
+
+    /* Board adjusts for static sidebar */
+    .board {
+        margin-left: var(--sidebar-width, 280px);
+        transition: margin-left 0.05s ease;
+    }
+}
+
+/* Touch device optimization for resize handle */
+@media (min-width: 1025px) and (hover: none) and (pointer: coarse) {
+    .sidebar-resize-handle {
+        width: 10px;
+        left: calc(var(--sidebar-width, 280px) - 5px);
     }
 }
