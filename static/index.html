@@ -366,7 +366,7 @@
                     </div>
                 </div>
 
-                <!-- Feedback Section (shown for all states except backlog) -->
+                <!-- Feedback Section for running tasks (progress status) -->
                 <div id="feedbackSection" class="feedback-section hidden">
                     <div class="form-group">
                         <label for="feedbackInput" id="feedbackLabel">Feedback to Claude:</label>
@@ -406,6 +406,20 @@
                 <div id="errorSection" class="error-section hidden">
                     <h3>Error</h3>
                     <p id="errorMessage"></p>
+                </div>
+
+                <!-- Continue Task Section (shown for review/blocked tasks, below logs) -->
+                <div id="continueTaskSection" class="continue-task-section hidden">
+                    <h3>Continue Task</h3>
+                    <div class="form-group">
+                        <textarea id="continueTaskInput" rows="3" placeholder="Enter your feedback or instructions for RALPH..."></textarea>
+                    </div>
+                    <div class="continue-task-footer">
+                        <p class="help-text">Task will be added to queue and continue with your message</p>
+                        <button id="btnContinueTask" class="btn btn-primary">
+                            <span class="btn-icon">▶</span> Resume
+                        </button>
+                    </div>
                 </div>
             </div>
 

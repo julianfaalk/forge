@@ -418,6 +418,68 @@ func (h *Handler) HandleTaskFeedback(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "feedback sent"})
 }
 
+// HandleTaskContinue handles POST /api/tasks/{id}/continue
+// This adds a task to the queue with a continue message for RALPH
+func (h *Handler) HandleTaskContinue(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	id := extractTaskID(r.URL.Path)
+	if id == "" {
+		h.writeError(w, http.StatusBadRequest, "Task ID required")
+		return
+	}
+
+	var req FeedbackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	// Get the task
+	task, err := h.db.GetTask(id)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to get task: "+err.Error())
+		return
+	}
+	if task == nil {
+		h.writeError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+
+	// Only allow continue for review or blocked tasks
+	if task.Status != StatusReview && task.Status != StatusBlocked {
+		h.writeError(w, http.StatusBadRequest, "Task must be in review or blocked status to continue")
+		return
+	}
+
+	// Add to queue with message
+	if err := h.db.AddToQueueWithMessage(id, req.Message); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to add task to queue: "+err.Error())
+		return
+	}
+
+	// Get the updated task to return queue position
+	updatedTask, err := h.db.GetTask(id)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to get updated task: "+err.Error())
+		return
+	}
+
+	// Broadcast task update
+	h.hub.BroadcastTaskUpdate(updatedTask)
+
+	// Try to start the next queued task (if no task is currently running)
+	go h.runner.TryStartNextQueued()
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":         "queued",
+		"queue_position": updatedTask.QueuePosition,
+	})
+}
+
 // Config handlers
 
 // HandleConfig handles GET/PUT /api/config

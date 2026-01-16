@@ -195,7 +195,8 @@ $(document).ready(function() {
         sidebarOpen = true;
         $('#sidebar').addClass('open');
         $('#sidebarOverlay').addClass('active');
-        saveSidebarState(true);
+        $('#sidebarResizeHandle').addClass('visible');
+        // Note: sidebar state is NOT persisted - always starts closed
     }
 
     /**
@@ -205,7 +206,8 @@ $(document).ready(function() {
         sidebarOpen = false;
         $('#sidebar').removeClass('open');
         $('#sidebarOverlay').removeClass('active');
-        saveSidebarState(false);
+        $('#sidebarResizeHandle').removeClass('visible');
+        // Note: sidebar state is NOT persisted - always starts closed
     }
 
     /**
@@ -555,12 +557,10 @@ $(document).ready(function() {
         // Update header display
         updateSelectedProjectDisplay(selectedProjectFilter);
 
-        // Sidebar defaults to closed - only open if explicitly saved as open
-        sidebarOpen = loadSidebarState();
-        if (sidebarOpen) {
-            $('#sidebar').addClass('open');
-            $('#sidebarOverlay').addClass('active');
-        }
+        // Sidebar always starts closed (no persistence)
+        sidebarOpen = false;
+        $('#sidebar').removeClass('open');
+        $('#sidebarOverlay').removeClass('active');
     }
 
     // ============================================================================
@@ -1005,6 +1005,37 @@ $(document).ready(function() {
         .fail(function(xhr) {
             const msg = xhr.responseJSON?.error || 'Error sending';
             showToast(msg, 'error');
+        });
+    }
+
+    // Continue task by adding it to queue with a message
+    function continueTaskWithMessage(taskId, message) {
+        const $btn = $('#btnContinueTask');
+        const originalText = $btn.html();
+        $btn.addClass('loading').html('<span class="btn-icon">...</span> Queuing...');
+
+        $.ajax({
+            url: '/api/tasks/' + taskId + '/continue',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ message: message })
+        })
+        .done(function(response) {
+            $('#continueTaskInput').val('');
+            closeModal();
+            if (response.queue_position && response.queue_position > 1) {
+                showToast('Task added to queue at position ' + response.queue_position, 'success');
+            } else {
+                showToast('Task resumed', 'success');
+            }
+            loadTasks(); // Refresh the task list
+        })
+        .fail(function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Error continuing task';
+            showToast(msg, 'error');
+        })
+        .always(function() {
+            $btn.removeClass('loading').html(originalText);
         });
     }
 
@@ -2705,7 +2736,12 @@ git rebase --continue
         });
 
         // Click on selected project display in header opens sidebar
-        $('#selectedProjectDisplay').on('click', function() {
+        // (but not when clicking on branch selector or push button)
+        $('#selectedProjectDisplay').on('click', function(e) {
+            // Don't open sidebar if clicking branch selector or push button
+            if ($(e.target).closest('#branchSelector, #pushBtn').length) {
+                return;
+            }
             openSidebar();
         });
 
@@ -3193,6 +3229,19 @@ git rebase --continue
             }
         });
 
+        // Continue Task button (for review/blocked tasks)
+        $('#btnContinueTask').on('click', function() {
+            const message = $('#continueTaskInput').val().trim();
+            continueTaskWithMessage(currentTaskId, message);
+        });
+
+        // Allow Ctrl+Enter to submit continue task
+        $('#continueTaskInput').on('keypress', function(e) {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                $('#btnContinueTask').click();
+            }
+        });
+
         $('#autoScroll').on('change', function() {
             autoScroll = $(this).is(':checked');
             // When re-enabled, immediately scroll to bottom
@@ -3597,30 +3646,22 @@ git rebase --continue
             $('#ralphControls').addClass('hidden');
         }
 
-        // Feedback section - show for all states except backlog
-        if (task.status !== 'backlog') {
+        // Feedback section - show only for running tasks (progress status)
+        if (task.status === 'progress') {
             $('#feedbackSection').removeClass('hidden');
-
-            // Update labels based on task status
-            if (task.status === 'progress') {
-                $('#feedbackLabel').text('Feedback to Claude:');
-                $('#feedbackHelp').text('Send feedback to running process');
-                $('#btnFeedback').text('Send');
-            } else if (task.status === 'done' || task.status === 'review') {
-                $('#feedbackLabel').text('Continue task:');
-                $('#feedbackHelp').text('Restarts Claude with your message');
-                $('#btnFeedback').text('Resume');
-            } else if (task.status === 'blocked') {
-                $('#feedbackLabel').text('Unblock task:');
-                $('#feedbackHelp').text('Restarts Claude with your message');
-                $('#btnFeedback').text('Entsperren');
-            } else {
-                $('#feedbackLabel').text('Message to Claude:');
-                $('#feedbackHelp').text('Starts Claude with your message');
-                $('#btnFeedback').text('Start');
-            }
+            $('#feedbackLabel').text('Feedback to Claude:');
+            $('#feedbackHelp').text('Send feedback to running process');
+            $('#btnFeedback').text('Send');
         } else {
             $('#feedbackSection').addClass('hidden');
+        }
+
+        // Continue Task section - show for review/blocked tasks (below logs)
+        if (task.status === 'review' || task.status === 'blocked') {
+            $('#continueTaskSection').removeClass('hidden');
+            $('#continueTaskInput').val(''); // Clear previous input
+        } else {
+            $('#continueTaskSection').addClass('hidden');
         }
 
         // Log section

@@ -60,11 +60,12 @@ type Task struct {
 	CommitHash  string `json:"commit_hash,omitempty"`  // Commit hash bei Task-Ende
 
 	// Queue and Process tracking
-	QueuePosition int        `json:"queue_position"`           // Position in Queue (0 = not queued)
-	ProcessPID    int        `json:"process_pid,omitempty"`    // PID of running Claude process
-	ProcessStatus string     `json:"process_status,omitempty"` // idle, running, finished, error
-	StartedAt     *time.Time `json:"started_at,omitempty"`     // When RALPH started
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`    // When RALPH finished
+	QueuePosition   int        `json:"queue_position"`             // Position in Queue (0 = not queued)
+	ProcessPID      int        `json:"process_pid,omitempty"`      // PID of running Claude process
+	ProcessStatus   string     `json:"process_status,omitempty"`   // idle, running, finished, error
+	StartedAt       *time.Time `json:"started_at,omitempty"`       // When RALPH started
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`      // When RALPH finished
+	ContinueMessage string     `json:"continue_message,omitempty"` // Message for RALPH when resuming from queue
 
 	// Attachments - optional screenshots/videos for visual context
 	Attachments []Attachment `json:"attachments,omitempty"` // Liste der Anhänge (Bilder/Videos)

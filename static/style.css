@@ -489,7 +489,7 @@ body {
 /* Sidebar Overlay */
 .sidebar-overlay {
     position: fixed;
-    top: 0;
+    top: var(--header-height, 60px);
     left: 0;
     right: 0;
     bottom: 0;
@@ -653,10 +653,10 @@ body {
 /* Sidebar - Overlay Mode */
 .sidebar {
     position: fixed;
-    top: 0;
+    top: var(--header-height, 60px);
     left: 0;
     width: 320px;
-    height: 100vh;
+    height: calc(100vh - var(--header-height, 60px));
     background-color: var(--bg-secondary);
     border-right: 1px solid var(--border-color);
     display: flex;
@@ -1548,6 +1548,76 @@ label {
 
 .feedback-section .form-group {
     margin-bottom: 0;
+}
+
+/* Continue Task Section (for review/blocked tasks - shown below logs) */
+.continue-task-section {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background-color: var(--bg-tertiary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.continue-task-section h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+
+.continue-task-section textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 0.75rem;
+    background-color: var(--input-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    resize: vertical;
+    font-family: inherit;
+}
+
+.continue-task-section textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.continue-task-section textarea::placeholder {
+    color: var(--text-secondary);
+}
+
+.continue-task-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.75rem;
+    gap: 1rem;
+}
+
+.continue-task-footer .help-text {
+    flex: 1;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.continue-task-footer .btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+}
+
+.continue-task-footer .btn-icon {
+    font-size: 0.75rem;
+}
+
+.continue-task-footer .btn.loading {
+    pointer-events: none;
+    opacity: 0.7;
 }
 
 /* Log Section */
@@ -4564,56 +4634,64 @@ label {
 }
 
 /* ============================================================================
-   DESKTOP BREAKPOINT (>1024px) - Static Sidebar with Resize
+   DESKTOP BREAKPOINT (>1024px) - Sidebar remains overlay but with resize
    ============================================================================ */
 @media (min-width: 1025px) {
-    /* Header adjusts for static sidebar */
+    /* Header stays full width - sidebar is overlay */
     .header {
-        padding-left: calc(var(--sidebar-width, 280px) + 1rem);
-        transition: padding-left 0.15s ease;
+        padding-left: 1rem;
     }
 
-    /* App container includes static sidebar */
+    /* App container full width */
     .app-container {
         min-height: calc(100vh - var(--header-height, 60px));
     }
 
-    /* Sidebar becomes static */
+    /* Sidebar stays as overlay on desktop too */
     .sidebar {
         position: fixed;
         top: var(--header-height, 60px);
         left: 0;
         width: var(--sidebar-width, 280px);
         height: calc(100vh - var(--header-height, 60px));
-        transform: translateX(0);
-        z-index: 100;
-        box-shadow: none;
-        transition: width 0.05s ease;
+        transform: translateX(-100%);
+        z-index: 160;
+        box-shadow: 4px 0 20px rgba(0, 0, 0, 0.3);
+        transition: transform 0.25s ease;
         min-width: 200px;
         max-width: 500px;
     }
 
-    /* Hide sidebar toggle on desktop */
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    /* Keep sidebar toggle visible on desktop */
     .sidebar-toggle {
-        display: none;
+        display: flex;
     }
 
-    /* Sidebar overlay not needed on desktop */
+    /* Keep sidebar overlay on desktop */
     .sidebar-overlay {
-        display: none !important;
+        display: block;
+        top: var(--header-height, 60px);
     }
 
-    /* Show resize handle on desktop */
+    /* Show resize handle on desktop when sidebar is open */
     .sidebar-resize-handle {
-        display: block;
+        display: none;
         position: fixed;
         top: var(--header-height, 60px);
         left: calc(var(--sidebar-width, 280px) - 3px);
         width: 6px;
         height: calc(100vh - var(--header-height, 60px));
         background-color: transparent;
-        z-index: 101;
+        z-index: 161;
         transition: left 0.05s ease, background-color 0.15s ease;
+    }
+
+    .sidebar-resize-handle.visible {
+        display: block;
     }
 
     .sidebar-resize-handle:hover,
@@ -4621,10 +4699,9 @@ label {
         background-color: var(--accent);
     }
 
-    /* Board adjusts for static sidebar */
+    /* Board uses full width - sidebar is overlay */
     .board {
-        margin-left: var(--sidebar-width, 280px);
-        transition: margin-left 0.05s ease;
+        margin-left: 0;
     }
 }
 

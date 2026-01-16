@@ -389,12 +389,19 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("## User Feedback\n\n")
-	sb.WriteString(feedback)
-	sb.WriteString("\n\n")
+	// Only include user feedback section if there's actual feedback
+	if feedback != "" {
+		sb.WriteString("## User Feedback\n\n")
+		sb.WriteString(feedback)
+		sb.WriteString("\n\n")
+	}
 
 	sb.WriteString("## Instructions\n\n")
-	sb.WriteString("Continue working on this task based on the user's feedback above.\n")
+	if feedback != "" {
+		sb.WriteString("Continue working on this task based on the user's feedback above.\n")
+	} else {
+		sb.WriteString("Continue working on this task.\n")
+	}
 	sb.WriteString("Use the same output markers as before:\n")
 	sb.WriteString("- `[ITERATION X]` at the start of each iteration\n")
 	sb.WriteString("- `[SUCCESS]` when done\n")
@@ -856,5 +863,16 @@ func (r *RalphRunner) TryStartNextQueued() {
 
 	// Get config and start RALPH
 	config, _ := r.db.GetConfig()
-	go r.Start(updatedTask, config)
+
+	// Check if there's a continue message (from resume action)
+	if updatedTask.ContinueMessage != "" {
+		log.Printf("TryStartNextQueued: Task %s has continue message, using continuation prompt", updatedTask.ID)
+		// Clear the continue message after reading it
+		r.db.ClearContinueMessage(updatedTask.ID)
+		// Use the continuation prompt which includes the message
+		go r.startContinuation(updatedTask, config, updatedTask.ContinueMessage)
+	} else {
+		// Regular start
+		go r.Start(updatedTask, config)
+	}
 }
