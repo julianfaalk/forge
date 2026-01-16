@@ -2536,7 +2536,7 @@ git rebase --continue
                 $children.append(`
                     <div class="project-item" data-project-id="${project.id}">
                         <span class="project-icon">${icon}</span>
-                        <span class="project-name">${escapeHtml(project.name)}</span>
+                        <span class="project-name" title="${escapeHtml(project.name)}">${escapeHtml(project.name)}</span>
                         ${gitBadge}
                         ${branchHtml}
                         ${countHtml}
@@ -2577,7 +2577,7 @@ git rebase --continue
                 $container.append(`
                     <div class="project-item" data-project-id="${project.id}">
                         <span class="project-icon">${icon}</span>
-                        <span class="project-name">${escapeHtml(project.name)}</span>
+                        <span class="project-name" title="${escapeHtml(project.name)}">${escapeHtml(project.name)}</span>
                         ${gitBadge}
                         ${branchHtml}
                         ${countHtml}
@@ -3395,43 +3395,57 @@ git rebase --continue
 
         if (!sidebar || !resizeHandle) return;
 
+        const DEFAULT_WIDTH = 280;
+        const MIN_WIDTH = 200;
+        const MAX_WIDTH = 500;
+        const STORAGE_KEY = 'runner-sidebar-width';
+
         let isResizing = false;
         let startX, startWidth;
 
-        // Load saved width from localStorage
-        const savedWidth = localStorage.getItem('grinder_sidebar_width');
-        if (savedWidth) {
-            const width = parseInt(savedWidth);
-            if (width >= 200 && width <= 500) {
-                sidebar.style.width = width + 'px';
-            }
+        // Helper to update sidebar width and CSS variable
+        function setSidebarWidth(width) {
+            const clampedWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, width));
+            sidebar.style.width = clampedWidth + 'px';
+            document.documentElement.style.setProperty('--sidebar-width', clampedWidth + 'px');
+            resizeHandle.style.left = (clampedWidth - 3) + 'px';
+            return clampedWidth;
         }
 
-        resizeHandle.addEventListener('mousedown', function(e) {
+        // Load saved width from localStorage
+        const savedWidth = localStorage.getItem(STORAGE_KEY);
+        if (savedWidth) {
+            const width = parseInt(savedWidth);
+            if (width >= MIN_WIDTH && width <= MAX_WIDTH) {
+                setSidebarWidth(width);
+            }
+        } else {
+            // Set default width
+            setSidebarWidth(DEFAULT_WIDTH);
+        }
+
+        // Start resize (mouse or touch)
+        function startResize(clientX) {
             isResizing = true;
-            startX = e.clientX;
+            startX = clientX;
             startWidth = sidebar.offsetWidth;
 
             resizeHandle.classList.add('dragging');
             document.body.style.cursor = 'col-resize';
             document.body.style.userSelect = 'none';
+        }
 
-            e.preventDefault();
-        });
-
-        document.addEventListener('mousemove', function(e) {
+        // During resize (mouse or touch)
+        function doResize(clientX) {
             if (!isResizing) return;
 
-            const diff = e.clientX - startX;
-            let newWidth = startWidth + diff;
+            const diff = clientX - startX;
+            const newWidth = startWidth + diff;
+            setSidebarWidth(newWidth);
+        }
 
-            // Clamp width between min and max
-            newWidth = Math.max(200, Math.min(500, newWidth));
-
-            sidebar.style.width = newWidth + 'px';
-        });
-
-        document.addEventListener('mouseup', function() {
+        // End resize (mouse or touch)
+        function endResize() {
             if (!isResizing) return;
 
             isResizing = false;
@@ -3440,7 +3454,50 @@ git rebase --continue
             document.body.style.userSelect = '';
 
             // Save width to localStorage
-            localStorage.setItem('grinder_sidebar_width', sidebar.offsetWidth);
+            localStorage.setItem(STORAGE_KEY, sidebar.offsetWidth);
+        }
+
+        // Mouse events
+        resizeHandle.addEventListener('mousedown', function(e) {
+            startResize(e.clientX);
+            e.preventDefault();
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            doResize(e.clientX);
+        });
+
+        document.addEventListener('mouseup', function() {
+            endResize();
+        });
+
+        // Touch events for tablet support
+        resizeHandle.addEventListener('touchstart', function(e) {
+            if (e.touches.length === 1) {
+                startResize(e.touches[0].clientX);
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchmove', function(e) {
+            if (isResizing && e.touches.length === 1) {
+                doResize(e.touches[0].clientX);
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchend', function() {
+            endResize();
+        });
+
+        document.addEventListener('touchcancel', function() {
+            endResize();
+        });
+
+        // Double-click to reset to default width
+        resizeHandle.addEventListener('dblclick', function() {
+            setSidebarWidth(DEFAULT_WIDTH);
+            localStorage.setItem(STORAGE_KEY, DEFAULT_WIDTH);
         });
     }
 
