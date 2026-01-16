@@ -205,9 +205,8 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 
-	// Check if moving to review - need to commit and push branch for review
-	// Push when moving TO review from any status (not just from progress)
-	movingToReview := req.Status != nil && *req.Status == StatusReview && oldStatus != StatusReview
+	// Trunk-based development: No automatic push when moving to review
+	// Users push manually using the Push button in the UI
 
 	// If moving away from progress, stop RALPH
 	if req.Status != nil && *req.Status != StatusProgress && oldStatus == StatusProgress {
@@ -227,40 +226,41 @@ func (h *Handler) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		}
 	}
 
-	// Handle branch creation when moving to progress
+	// Trunk-based development: Switch to working branch and create rollback tag
 	if startRalph {
 		projectDir := currentTask.ProjectDir
+		var project *Project
 		if projectDir == "" && currentTask.ProjectID != "" {
-			project, _ := h.db.GetProject(currentTask.ProjectID)
+			project, _ = h.db.GetProject(currentTask.ProjectID)
 			if project != nil {
 				projectDir = project.Path
 			}
+		} else if currentTask.ProjectID != "" {
+			project, _ = h.db.GetProject(currentTask.ProjectID)
 		}
-		if projectDir != "" && IsGitRepository(projectDir) {
-			branchName, err := CreateWorkingBranch(projectDir, currentTask.ID, currentTask.Title)
-			if err != nil {
-				h.writeError(w, http.StatusInternalServerError, "Failed to create working branch: "+err.Error())
-				return
-			}
-			// Update working branch in request
-			req.WorkingBranch = &branchName
-		}
-	}
 
-	// Handle push when moving to review - commit and push branch for review
-	if movingToReview && currentTask.WorkingBranch != "" {
-		projectDir := currentTask.ProjectDir
-		if projectDir == "" && currentTask.ProjectID != "" {
-			project, _ := h.db.GetProject(currentTask.ProjectID)
-			if project != nil {
-				projectDir = project.Path
-			}
-		}
 		if projectDir != "" && IsGitRepository(projectDir) {
-			err := PushWorkingBranchForReview(projectDir, currentTask.WorkingBranch, currentTask.Title)
-			if err != nil {
-				// Push failed - still allow moving to review but log error
-				h.db.UpdateTaskError(id, "Push warning: "+err.Error())
+			// Use project's working branch if set
+			if project != nil && project.WorkingBranch != "" {
+				if err := EnsureOnBranch(projectDir, project.WorkingBranch); err != nil {
+					log.Printf("Warning: Failed to switch to working branch %s: %v", project.WorkingBranch, err)
+				}
+				// Update task's working branch
+				branchName := project.WorkingBranch
+				req.WorkingBranch = &branchName
+			}
+
+			// Pull latest changes
+			if err := PullFromRemote(projectDir); err != nil {
+				log.Printf("Warning: Pull failed: %v", err)
+			}
+
+			// Create rollback tag
+			tagName, err := CreateRollbackTag(projectDir, currentTask.ID)
+			if err == nil {
+				h.db.UpdateTaskRollbackTag(currentTask.ID, tagName)
+			} else {
+				log.Printf("Warning: Failed to create rollback tag: %v", err)
 			}
 		}
 	}
@@ -1396,165 +1396,9 @@ func (h *Handler) HandleDeployTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleMergeTask handles POST /api/tasks/{id}/merge
-// Merges the task's working branch into the default branch (e.g., main).
-// On conflict, creates a GitHub PR for manual resolution.
+// DEPRECATED: Merge workflow replaced with trunk-based development.
 func (h *Handler) HandleMergeTask(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[HandleMergeTask] Method: %s, URL: %s", r.Method, r.URL.Path)
-	if r.Method != http.MethodPost {
-		log.Printf("[HandleMergeTask] Method not allowed: %s", r.Method)
-		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-		return
-	}
-
-	taskID := extractTaskID(r.URL.Path)
-	task, err := h.db.GetTask(taskID)
-	if err != nil || task == nil {
-		h.writeError(w, http.StatusNotFound, "Task not found")
-		return
-	}
-
-	// Task must have a working branch
-	if task.WorkingBranch == "" {
-		h.writeError(w, http.StatusBadRequest, "Task has no working branch")
-		return
-	}
-
-	// Determine project directory
-	projectDir := task.ProjectDir
-	if projectDir == "" && task.ProjectID != "" {
-		project, _ := h.db.GetProject(task.ProjectID)
-		if project != nil {
-			projectDir = project.Path
-		}
-	}
-
-	if projectDir == "" {
-		h.writeError(w, http.StatusBadRequest, "Task has no project directory")
-		return
-	}
-
-	// Check if it's a git repo
-	if !IsGitRepository(projectDir) {
-		h.writeError(w, http.StatusBadRequest, "Project is not a git repository")
-		return
-	}
-
-	// Get config for default branch
-	config, _ := h.db.GetConfig()
-	targetBranch := "main"
-	if config != nil && config.DefaultBranch != "" {
-		targetBranch = config.DefaultBranch
-	}
-
-	// Check if the working branch still exists locally
-	if !BranchExists(projectDir, task.WorkingBranch) {
-		// Branch doesn't exist - it was probably already merged via GitHub PR
-		// Clear the working branch and conflict PR info
-		h.db.UpdateTaskWorkingBranch(taskID, "")
-		h.db.UpdateTaskConflictPR(taskID, "", 0)
-
-		// Broadcast task update
-		updatedTask, _ := h.db.GetTask(taskID)
-		if updatedTask != nil {
-			h.hub.BroadcastTaskUpdate(updatedTask)
-		}
-
-		h.writeJSON(w, http.StatusOK, MergeResponse{
-			Success: true,
-			Message: "Branch already merged (PR was completed on GitHub)",
-		})
-		return
-	}
-
-	// Try to merge the working branch
-	mergeResult := TryMergeWorkingBranch(projectDir, task.WorkingBranch, targetBranch, taskID, task.Title)
-
-	if mergeResult.Success {
-		// Success! Clear the working branch from the task
-		h.db.UpdateTaskWorkingBranch(taskID, "")
-
-		// Also clear any conflict PR info
-		h.db.UpdateTaskConflictPR(taskID, "", 0)
-
-		// Broadcast task update
-		updatedTask, _ := h.db.GetTask(taskID)
-		if updatedTask != nil {
-			h.hub.BroadcastTaskUpdate(updatedTask)
-		}
-
-		h.writeJSON(w, http.StatusOK, MergeResponse{
-			Success: true,
-			Message: mergeResult.Message,
-		})
-		return
-	}
-
-	// Merge failed - check if it's a conflict
-	if mergeResult.Conflict != nil {
-		// Try to create a GitHub PR
-		remoteURL, err := GetRemoteURL(projectDir)
-		if err != nil {
-			h.writeError(w, http.StatusInternalServerError, "Failed to get remote URL: "+err.Error())
-			return
-		}
-
-		repoFullName, err := ParseGitHubRepoFromURL(remoteURL)
-		if err != nil {
-			h.writeError(w, http.StatusInternalServerError, "Failed to parse GitHub repo: "+err.Error())
-			return
-		}
-
-		// Get GitHub token from config
-		if config == nil || config.GithubToken == "" {
-			h.writeError(w, http.StatusBadRequest, "GitHub token not configured - cannot create PR")
-			return
-		}
-
-		// Build PR body
-		prBody := fmt.Sprintf("## Task: %s\n\n", task.Title)
-		if task.Description != "" {
-			prBody += fmt.Sprintf("### Description\n%s\n\n", task.Description)
-		}
-		if task.AcceptanceCriteria != "" {
-			prBody += fmt.Sprintf("### Acceptance Criteria\n%s\n\n", task.AcceptanceCriteria)
-		}
-		prBody += "---\n*Created by GRINDER due to merge conflict*"
-
-		// Create GitHub PR
-		ghClient := NewGitHubClient(config.GithubToken)
-		pr, err := ghClient.CreatePullRequest(
-			repoFullName,
-			task.Title,
-			prBody,
-			task.WorkingBranch,
-			targetBranch,
-		)
-		if err != nil {
-			h.writeError(w, http.StatusInternalServerError, "Failed to create PR: "+err.Error())
-			return
-		}
-
-		// Store PR info in task
-		h.db.UpdateTaskConflictPR(taskID, pr.HTMLURL, pr.Number)
-
-		// Broadcast task update
-		updatedTask, _ := h.db.GetTask(taskID)
-		if updatedTask != nil {
-			h.hub.BroadcastTaskUpdate(updatedTask)
-		}
-
-		h.writeJSON(w, http.StatusOK, MergeResponse{
-			Success:  false,
-			Message:  "Merge conflict detected - PR created for manual resolution",
-			Conflict: true,
-			PRURL:    pr.HTMLURL,
-			PRNumber: pr.Number,
-		})
-		return
-	}
-
-	// Some other merge error (not a conflict)
-	h.writeError(w, http.StatusInternalServerError, "Merge failed: "+mergeResult.Message)
+	h.writeError(w, http.StatusGone, "Merge workflow deprecated - using trunk-based development")
 }
 
 // HandleScanAllProjects handles POST /api/projects/scan-all
@@ -2242,4 +2086,258 @@ func (h *Handler) DeleteTaskAttachments(taskID string) error {
 	os.Remove(taskUploadDir) // Ignore error if not empty
 
 	return nil
+}
+
+// ============================================================================
+// Trunk-Based Development Handlers
+// ============================================================================
+
+// HandleTaskRollback handles POST /api/tasks/{id}/rollback
+// Rolls back all changes made by a task to its rollback tag.
+func (h *Handler) HandleTaskRollback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	taskID := extractTaskID(r.URL.Path)
+	task, err := h.db.GetTask(taskID)
+	if err != nil || task == nil {
+		h.writeError(w, http.StatusNotFound, "Task not found")
+		return
+	}
+
+	// Task must be in review or blocked
+	if task.Status != StatusReview && task.Status != StatusBlocked {
+		h.writeError(w, http.StatusBadRequest, "Task must be in review or blocked status")
+		return
+	}
+
+	// Task must have a rollback tag
+	if task.RollbackTag == "" {
+		h.writeError(w, http.StatusBadRequest, "Task has no rollback tag")
+		return
+	}
+
+	// Determine project directory
+	projectDir := task.ProjectDir
+	if projectDir == "" && task.ProjectID != "" {
+		project, _ := h.db.GetProject(task.ProjectID)
+		if project != nil {
+			projectDir = project.Path
+		}
+	}
+
+	if projectDir == "" {
+		h.writeError(w, http.StatusBadRequest, "Task has no project directory")
+		return
+	}
+
+	// Check if it's a git repo
+	if !IsGitRepository(projectDir) {
+		h.writeError(w, http.StatusBadRequest, "Project is not a git repository")
+		return
+	}
+
+	// Rollback to tag
+	if err := RollbackToTag(projectDir, task.RollbackTag); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Rollback failed: "+err.Error())
+		return
+	}
+
+	// Delete the rollback tag
+	DeleteTag(projectDir, task.RollbackTag)
+
+	// Clear rollback tag and move task back to backlog
+	h.db.ClearTaskRollbackTag(taskID)
+	h.db.UpdateTaskStatus(taskID, StatusBacklog)
+
+	// Broadcast task update
+	updatedTask, _ := h.db.GetTask(taskID)
+	if updatedTask != nil {
+		if attachments, err := h.db.GetAttachmentsByTask(taskID); err == nil {
+			updatedTask.Attachments = attachments
+		}
+		h.hub.BroadcastTaskUpdate(updatedTask)
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "success",
+		"message": "Task rolled back successfully",
+	})
+}
+
+// HandleProjectPushStatus handles GET /api/projects/{id}/push-status
+// Returns the number of unpushed commits for a project.
+func (h *Handler) HandleProjectPushStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	projectID := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(projectID)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if !IsGitRepository(project.Path) {
+		h.writeError(w, http.StatusBadRequest, "Project is not a git repository")
+		return
+	}
+
+	branch, err := GetCurrentBranch(project.Path)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to get current branch: "+err.Error())
+		return
+	}
+
+	hasRemote := HasRemote(project.Path)
+	unpushedCount := 0
+
+	if hasRemote {
+		count, err := GetUnpushedCommitCount(project.Path, branch)
+		if err == nil {
+			unpushedCount = count
+		}
+	}
+
+	h.writeJSON(w, http.StatusOK, PushStatusResponse{
+		UnpushedCount: unpushedCount,
+		Branch:        branch,
+		HasRemote:     hasRemote,
+	})
+}
+
+// HandleProjectPush handles POST /api/projects/{id}/push
+// Commits any uncommitted changes and pushes to the remote.
+func (h *Handler) HandleProjectPush(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	projectID := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(projectID)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if !IsGitRepository(project.Path) {
+		h.writeError(w, http.StatusBadRequest, "Project is not a git repository")
+		return
+	}
+
+	if !HasRemote(project.Path) {
+		h.writeError(w, http.StatusBadRequest, "Project has no remote configured")
+		return
+	}
+
+	// First commit any uncommitted changes
+	committed := false
+	hasChanges, _ := HasUncommittedChanges(project.Path)
+	if hasChanges {
+		branch, _ := GetCurrentBranch(project.Path)
+		commitMsg := fmt.Sprintf("Update on %s", branch)
+		if _, err := CommitAllChanges(project.Path, commitMsg); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Commit failed: "+err.Error())
+			return
+		}
+		committed = true
+	}
+
+	// Then push
+	if err := PushToRemote(project.Path); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Push failed: "+err.Error())
+		return
+	}
+
+	msg := "Push successful"
+	if committed {
+		msg = "Changes committed and pushed"
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "success",
+		"message": msg,
+	})
+}
+
+// HandleProjectSetWorkingBranch handles POST /api/projects/{id}/working-branch
+// Sets or creates the persistent working branch for a project.
+// When creating a new branch, it commits all changes and pushes to remote.
+func (h *Handler) HandleProjectSetWorkingBranch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	projectID := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(projectID)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	if !IsGitRepository(project.Path) {
+		h.writeError(w, http.StatusBadRequest, "Project is not a git repository")
+		return
+	}
+
+	var req SetWorkingBranchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	if req.Branch == "" {
+		h.writeError(w, http.StatusBadRequest, "Branch name is required")
+		return
+	}
+
+	// Create new branch if requested
+	if req.Create {
+		// Create new branch from current HEAD (keeps local changes)
+		if err := CreateAndCheckoutBranch(project.Path, req.Branch); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to create branch: "+err.Error())
+			return
+		}
+
+		// Check for uncommitted changes and commit them
+		hasChanges, _ := HasUncommittedChanges(project.Path)
+		if hasChanges {
+			commitMsg := fmt.Sprintf("Initial commit on %s", req.Branch)
+			if _, err := CommitAllChanges(project.Path, commitMsg); err != nil {
+				log.Printf("Warning: Failed to commit changes: %v", err)
+				// Continue anyway - branch was created
+			}
+		}
+
+		// Push new branch to remote
+		if HasRemote(project.Path) {
+			if err := PushToRemote(project.Path); err != nil {
+				log.Printf("Warning: Failed to push branch: %v", err)
+				// Don't fail - branch was created locally
+			}
+		}
+	} else {
+		// Switch to existing branch
+		if err := CheckoutBranch(project.Path, req.Branch); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to switch branch: "+err.Error())
+			return
+		}
+	}
+
+	// Save working branch to database
+	if err := h.db.UpdateProjectWorkingBranch(projectID, req.Branch); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to save working branch: "+err.Error())
+		return
+	}
+
+	// Reload project to get updated data
+	updatedProject, _ := h.db.GetProject(projectID)
+
+	h.writeJSON(w, http.StatusOK, updatedProject)
 }

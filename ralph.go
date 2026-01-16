@@ -544,12 +544,30 @@ func (r *RalphRunner) processOutput(taskID string, reader io.Reader, maxIteratio
 // handleSuccess handles successful task completion
 // Note: TryStartNextQueued is called from cmd.Wait() goroutine after process cleanup
 func (r *RalphRunner) handleSuccess(taskID string) {
+	// Get task to find project directory
+	task, _ := r.db.GetTask(taskID)
+	if task != nil {
+		// Record commit hash for trunk-based development
+		projectDir := task.ProjectDir
+		if projectDir == "" && task.ProjectID != "" {
+			project, _ := r.db.GetProject(task.ProjectID)
+			if project != nil {
+				projectDir = project.Path
+			}
+		}
+		if projectDir != "" && IsGitRepository(projectDir) {
+			if commitHash, err := GetCurrentCommitHash(projectDir); err == nil {
+				r.db.UpdateTaskCommitHash(taskID, commitHash)
+			}
+		}
+	}
+
 	r.db.UpdateTaskStatus(taskID, StatusReview)
 	r.hub.BroadcastStatus(taskID, StatusReview, 0)
 	r.hub.BroadcastLog(taskID, "\n[GRINDER] Task moved to Review\n")
 
 	// Get updated task and broadcast
-	task, _ := r.db.GetTask(taskID)
+	task, _ = r.db.GetTask(taskID)
 	if task != nil {
 		r.hub.BroadcastTaskUpdate(task)
 	}
@@ -791,20 +809,35 @@ func (r *RalphRunner) TryStartNextQueued() {
 		return
 	}
 
-	// Create working branch if in a git repo
+	// Trunk-based development: Switch to working branch and create rollback tag
 	if projectDir != "" && IsGitRepository(projectDir) {
-		branchName, err := CreateWorkingBranch(projectDir, nextTask.ID, nextTask.Title)
-		if err != nil {
-			log.Printf("TryStartNextQueued: Failed to create branch: %v", err)
-			r.db.UpdateTaskStatus(nextTask.ID, StatusBlocked)
-			r.db.UpdateTaskError(nextTask.ID, "Failed to create working branch: "+err.Error())
-			r.hub.BroadcastTaskUpdate(nextTask)
-			// Try the next one
-			go r.TryStartNextQueued()
-			return
+		var project *Project
+		if nextTask.ProjectID != "" {
+			project, _ = r.db.GetProject(nextTask.ProjectID)
 		}
-		r.db.UpdateTaskWorkingBranch(nextTask.ID, branchName)
-		nextTask.WorkingBranch = branchName
+
+		// Use project's working branch if set
+		if project != nil && project.WorkingBranch != "" {
+			if err := EnsureOnBranch(projectDir, project.WorkingBranch); err != nil {
+				log.Printf("TryStartNextQueued: Failed to switch to working branch %s: %v", project.WorkingBranch, err)
+			} else {
+				r.db.UpdateTaskWorkingBranch(nextTask.ID, project.WorkingBranch)
+				nextTask.WorkingBranch = project.WorkingBranch
+			}
+		}
+
+		// Pull latest changes
+		if err := PullFromRemote(projectDir); err != nil {
+			log.Printf("TryStartNextQueued: Pull failed (continuing): %v", err)
+		}
+
+		// Create rollback tag
+		tagName, err := CreateRollbackTag(projectDir, nextTask.ID)
+		if err == nil {
+			r.db.UpdateTaskRollbackTag(nextTask.ID, tagName)
+		} else {
+			log.Printf("TryStartNextQueued: Failed to create rollback tag: %v", err)
+		}
 	}
 
 	// Broadcast status update

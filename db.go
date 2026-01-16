@@ -318,6 +318,45 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 7 completed")
 	}
 
+	// ========== Migration 8: Trunk-Based Development ==========
+	if version < 8 {
+		log.Println("Running migration 8: Trunk-based development fields")
+
+		// Project: Persistenter Working Branch
+		_, err := d.db.Exec("ALTER TABLE projects ADD COLUMN working_branch TEXT DEFAULT ''")
+		if err != nil {
+			log.Printf("Note: Column projects.working_branch may already exist: %v", err)
+		}
+
+		// Config: Push-Strategie
+		_, err = d.db.Exec("ALTER TABLE config ADD COLUMN push_strategy TEXT DEFAULT 'manual'")
+		if err != nil {
+			log.Printf("Note: Column config.push_strategy may already exist: %v", err)
+		}
+
+		// Task: Rollback-Felder
+		taskColumns := []struct {
+			name string
+			def  string
+		}{
+			{"rollback_tag", "TEXT DEFAULT ''"},
+			{"commit_hash", "TEXT DEFAULT ''"},
+		}
+
+		for _, col := range taskColumns {
+			query := "ALTER TABLE tasks ADD COLUMN " + col.name + " " + col.def
+			if _, err := d.db.Exec(query); err != nil {
+				log.Printf("Note: Column tasks.%s may already exist: %v", col.name, err)
+			}
+		}
+
+		_, err = d.db.Exec("INSERT INTO schema_version (version) VALUES (8)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 8 completed")
+	}
+
 	return nil
 }
 
@@ -339,6 +378,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
+		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -363,6 +403,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
+			&t.RollbackTag, &t.CommitHash,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -407,6 +448,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
+		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -419,6 +461,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&t.ConflictPRURL, &t.ConflictPRNumber,
 		&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 		&startedAt, &finishedAt,
+		&t.RollbackTag, &t.CommitHash,
 		&ttID, &ttName, &ttColor, &ttIsSystem,
 	)
 	if err == sql.ErrNoRows {
@@ -457,6 +500,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       COALESCE(t.conflict_pr_url, ''), COALESCE(t.conflict_pr_number, 0),
 		       COALESCE(t.queue_position, 0), COALESCE(t.process_pid, 0), COALESCE(t.process_status, 'idle'),
 		       t.started_at, t.finished_at,
+		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -482,6 +526,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 			&t.ConflictPRURL, &t.ConflictPRNumber,
 			&t.QueuePosition, &t.ProcessPID, &t.ProcessStatus,
 			&startedAt, &finishedAt,
+			&t.RollbackTag, &t.CommitHash,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -1019,6 +1064,7 @@ func (d *Database) GetAllProjects() ([]Project, error) {
 
 	rows, err := d.db.Query(`
 		SELECT p.id, p.name, p.path, p.description, p.is_auto_detected, p.created_at, p.updated_at,
+		       COALESCE(p.working_branch, ''),
 		       (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as task_count
 		FROM projects p
 		ORDER BY p.name ASC
@@ -1033,7 +1079,7 @@ func (d *Database) GetAllProjects() ([]Project, error) {
 		var p Project
 		err := rows.Scan(
 			&p.ID, &p.Name, &p.Path, &p.Description, &p.IsAutoDetected,
-			&p.CreatedAt, &p.UpdatedAt, &p.TaskCount,
+			&p.CreatedAt, &p.UpdatedAt, &p.WorkingBranch, &p.TaskCount,
 		)
 		if err != nil {
 			return nil, err
@@ -1059,12 +1105,13 @@ func (d *Database) GetProject(id string) (*Project, error) {
 	var p Project
 	err := d.db.QueryRow(`
 		SELECT p.id, p.name, p.path, p.description, p.is_auto_detected, p.created_at, p.updated_at,
+		       COALESCE(p.working_branch, ''),
 		       (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as task_count
 		FROM projects p
 		WHERE p.id = ?
 	`, id).Scan(
 		&p.ID, &p.Name, &p.Path, &p.Description, &p.IsAutoDetected,
-		&p.CreatedAt, &p.UpdatedAt, &p.TaskCount,
+		&p.CreatedAt, &p.UpdatedAt, &p.WorkingBranch, &p.TaskCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1412,7 +1459,7 @@ func (d *Database) GetConfig() (*Config, error) {
 
 	var c Config
 	// Nullable Felder für optionale Spalten
-	var projectsBaseDir, githubToken, defaultBranch sql.NullString
+	var projectsBaseDir, githubToken, defaultBranch, pushStrategy sql.NullString
 	var autoCommit, autoPush sql.NullBool
 	var defaultPriority, autoArchiveDays sql.NullInt64
 
@@ -1421,11 +1468,11 @@ func (d *Database) GetConfig() (*Config, error) {
 		       COALESCE(projects_base_dir, ''), COALESCE(github_token, ''),
 		       COALESCE(auto_commit, 0), COALESCE(auto_push, 0),
 		       COALESCE(default_branch, 'main'), COALESCE(default_priority, 2),
-		       COALESCE(auto_archive_days, 0)
+		       COALESCE(auto_archive_days, 0), COALESCE(push_strategy, 'manual')
 		FROM config WHERE id = 1
 	`).Scan(&c.ID, &c.DefaultProjectDir, &c.DefaultMaxIterations, &c.ClaudeCommand,
 		&projectsBaseDir, &githubToken, &autoCommit, &autoPush,
-		&defaultBranch, &defaultPriority, &autoArchiveDays)
+		&defaultBranch, &defaultPriority, &autoArchiveDays, &pushStrategy)
 	if err != nil {
 		return nil, err
 	}
@@ -1451,6 +1498,9 @@ func (d *Database) GetConfig() (*Config, error) {
 	}
 	if autoArchiveDays.Valid {
 		c.AutoArchiveDays = int(autoArchiveDays.Int64)
+	}
+	if pushStrategy.Valid {
+		c.PushStrategy = pushStrategy.String
 	}
 	return &c, nil
 }
@@ -1463,7 +1513,7 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 
 	// Aktuelle Config laden
 	var c Config
-	var projectsBaseDir, githubToken, defaultBranch sql.NullString
+	var projectsBaseDir, githubToken, defaultBranch, pushStrategy sql.NullString
 	var autoCommit, autoPush sql.NullBool
 	var defaultPriority, autoArchiveDays sql.NullInt64
 
@@ -1472,11 +1522,11 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 		       COALESCE(projects_base_dir, ''), COALESCE(github_token, ''),
 		       COALESCE(auto_commit, 0), COALESCE(auto_push, 0),
 		       COALESCE(default_branch, 'main'), COALESCE(default_priority, 2),
-		       COALESCE(auto_archive_days, 0)
+		       COALESCE(auto_archive_days, 0), COALESCE(push_strategy, 'manual')
 		FROM config WHERE id = 1
 	`).Scan(&c.ID, &c.DefaultProjectDir, &c.DefaultMaxIterations, &c.ClaudeCommand,
 		&projectsBaseDir, &githubToken, &autoCommit, &autoPush,
-		&defaultBranch, &defaultPriority, &autoArchiveDays)
+		&defaultBranch, &defaultPriority, &autoArchiveDays, &pushStrategy)
 	if err != nil {
 		return nil, err
 	}
@@ -1502,6 +1552,9 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 	}
 	if autoArchiveDays.Valid {
 		c.AutoArchiveDays = int(autoArchiveDays.Int64)
+	}
+	if pushStrategy.Valid {
+		c.PushStrategy = pushStrategy.String
 	}
 
 	// Updates anwenden
@@ -1547,10 +1600,11 @@ func (d *Database) UpdateConfig(req UpdateConfigRequest) (*Config, error) {
 			auto_push = ?,
 			default_branch = ?,
 			default_priority = ?,
-			auto_archive_days = ?
+			auto_archive_days = ?,
+			push_strategy = ?
 		WHERE id = 1
 	`, c.DefaultProjectDir, c.DefaultMaxIterations, c.ClaudeCommand, c.ProjectsBaseDir, c.GithubToken,
-		c.AutoCommit, c.AutoPush, c.DefaultBranch, c.DefaultPriority, c.AutoArchiveDays)
+		c.AutoCommit, c.AutoPush, c.DefaultBranch, c.DefaultPriority, c.AutoArchiveDays, c.PushStrategy)
 	if err != nil {
 		return nil, err
 	}
@@ -1638,5 +1692,53 @@ func (d *Database) DeleteAttachmentsByTask(taskID string) error {
 	defer d.mu.Unlock()
 
 	_, err := d.db.Exec(`DELETE FROM attachments WHERE task_id = ?`, taskID)
+	return err
+}
+
+// ============================================================================
+// Trunk-Based Development Operations
+// ============================================================================
+
+// UpdateProjectWorkingBranch aktualisiert den persistenten Working-Branch eines Projekts.
+func (d *Database) UpdateProjectWorkingBranch(id string, branch string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE projects SET working_branch = ?, updated_at = ? WHERE id = ?
+	`, branch, time.Now(), id)
+	return err
+}
+
+// UpdateTaskRollbackTag aktualisiert den Rollback-Tag eines Tasks.
+func (d *Database) UpdateTaskRollbackTag(id string, tag string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET rollback_tag = ?, updated_at = ? WHERE id = ?
+	`, tag, time.Now(), id)
+	return err
+}
+
+// UpdateTaskCommitHash aktualisiert den Commit-Hash eines Tasks.
+func (d *Database) UpdateTaskCommitHash(id string, hash string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET commit_hash = ?, updated_at = ? WHERE id = ?
+	`, hash, time.Now(), id)
+	return err
+}
+
+// ClearTaskRollbackTag löscht den Rollback-Tag eines Tasks.
+func (d *Database) ClearTaskRollbackTag(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE tasks SET rollback_tag = '', updated_at = ? WHERE id = ?
+	`, time.Now(), id)
 	return err
 }

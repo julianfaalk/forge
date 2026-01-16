@@ -250,9 +250,11 @@ $(document).ready(function() {
         const $selector = $('#branchSelector');
         const $branchName = $('#currentBranchName');
         const $pullBtn = $('#branchPullBtn');
+        const $pushBtn = $('#pushBtn');
 
         if (!projectId) {
             $selector.addClass('hidden');
+            $pushBtn.addClass('hidden');
             return;
         }
 
@@ -262,13 +264,111 @@ $(document).ready(function() {
                     $branchName.text(data.current_branch).attr('title', data.current_branch);
                     $selector.removeClass('hidden');
                     checkBranchBehind(projectId, data.current_branch);
+                    // Update push status for trunk-based development
+                    updatePushStatus(projectId);
                 } else {
                     $selector.addClass('hidden');
+                    $pushBtn.addClass('hidden');
                 }
             })
             .fail(function() {
                 $selector.addClass('hidden');
+                $pushBtn.addClass('hidden');
             });
+    }
+
+    /**
+     * Update push status badge (Trunk-based development)
+     */
+    function updatePushStatus(projectId) {
+        const $pushBtn = $('#pushBtn');
+        const $pushBadge = $('#pushBadge');
+
+        if (!projectId) {
+            $pushBtn.addClass('hidden');
+            return;
+        }
+
+        $.get('/api/projects/' + projectId + '/push-status')
+            .done(function(data) {
+                if (data.has_remote && data.unpushed_count > 0) {
+                    $pushBadge.text(data.unpushed_count).removeClass('hidden');
+                    $pushBtn.removeClass('hidden');
+                } else if (data.has_remote) {
+                    $pushBadge.addClass('hidden');
+                    $pushBtn.removeClass('hidden');
+                } else {
+                    $pushBtn.addClass('hidden');
+                }
+            })
+            .fail(function() {
+                $pushBtn.addClass('hidden');
+            });
+    }
+
+    /**
+     * Push to remote (Trunk-based development)
+     */
+    function pushToRemote(projectId) {
+        showToast('Committing & pushing...', 'info');
+
+        $.post('/api/projects/' + projectId + '/push')
+            .done(function(data) {
+                showToast(data.message || 'Push successful!', 'success');
+                updatePushStatus(projectId);
+            })
+            .fail(function(err) {
+                const msg = err.responseJSON?.error || 'Push failed';
+                showToast(msg, 'error');
+            });
+    }
+
+    /**
+     * Rollback task to its rollback tag (Trunk-based development)
+     */
+    function rollbackTask(taskId) {
+        if (!confirm('Are you sure you want to rollback this task? All changes made by this task will be undone.')) {
+            return;
+        }
+
+        showToast('Rolling back...', 'info');
+
+        $.post('/api/tasks/' + taskId + '/rollback')
+            .done(function(data) {
+                showToast('Task rolled back successfully!', 'success');
+            })
+            .fail(function(err) {
+                const msg = err.responseJSON?.error || 'Rollback failed';
+                showToast(msg, 'error');
+            });
+    }
+
+    /**
+     * Set working branch for project (Trunk-based development)
+     */
+    function setWorkingBranch(projectId, branch, create) {
+        showToast(create ? 'Creating branch, committing & pushing...' : 'Setting working branch...', 'info');
+
+        $.ajax({
+            url: '/api/projects/' + projectId + '/working-branch',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ branch: branch, create: !!create })
+        })
+        .done(function(data) {
+            const msg = create
+                ? 'Branch "' + branch + '" created and pushed'
+                : 'Working branch set to: ' + branch;
+            showToast(msg, 'success');
+            closeBranchDropdown();
+            updateBranchSelector(projectId);
+            updatePushStatus(projectId); // Update push badge
+            loadProjects(); // Refresh project list
+        })
+        .fail(function(err) {
+            const msg = err.responseJSON?.error || 'Failed to set working branch';
+            showToast(msg, 'error');
+        });
     }
 
     /**
@@ -330,6 +430,17 @@ $(document).ready(function() {
             if (localBranches.length === 0) {
                 $list.html('<div class="branch-dropdown-item">No branches</div>');
             }
+
+            // Separator and "Create new branch" option
+            $list.append('<div class="branch-dropdown-separator"></div>');
+            $list.append(`
+                <div class="branch-dropdown-item branch-create-new" data-action="create-branch">
+                    <svg class="branch-item-icon" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z"/>
+                    </svg>
+                    <span class="branch-item-name">Create new branch</span>
+                </div>
+            `);
         }).fail(function() {
             $list.html('<div class="branch-dropdown-item">Error loading</div>');
         });
@@ -2148,20 +2259,8 @@ git rebase --continue
     // Build dropdown menu items based on task state
     function buildTaskDropdownItems(task) {
         const items = [];
-        const mergeBranch = config.default_branch || 'main';
-
-        // Add Merge option for tasks with branch in review or done status (and no conflict PR)
-        if (task.working_branch && (task.status === 'review' || task.status === 'done') && !task.conflict_pr_url) {
-            items.push(`
-                <button class="task-dropdown-item merge-item" data-action="merge" data-id="${task.id}">
-                    <svg viewBox="0 0 16 16" fill="currentColor">
-                        <path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v.878A2.5 2.5 0 0 0 6 8.5h1.5v5.128a2.251 2.251 0 1 0 1.5 0V8.5H10a2.5 2.5 0 0 0 2.5-2.5v-.878a2.25 2.25 0 1 0-1.5 0v.878a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-.878ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM3.5 3.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0Zm8.75-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>
-                    </svg>
-                    Merge to ${escapeHtml(mergeBranch)}
-                </button>
-            `);
-        }
-
+        // Trunk-based development: Merge option removed
+        // Dropdown now empty - but kept for potential future actions
         return items;
     }
 
@@ -2188,42 +2287,18 @@ git rebase --continue
             statusBadge = `<span class="status-badge blocked">BLOCKED</span>`;
         }
 
-        // Build branch row HTML (only if task has a branch)
-        let branchRowHtml = '';
-        if (task.working_branch) {
-            const maxBranchLength = 30;
-            const shortBranch = task.working_branch.length > maxBranchLength
-                ? task.working_branch.substring(0, maxBranchLength - 3) + '...'
-                : task.working_branch;
+        // Trunk-based development: Branch row removed - all tasks work on the same branch
 
-            // Get GitHub URL from the task's project
-            const project = task.project_id ? projects.find(p => p.id === task.project_id) : null;
-            const githubUrl = project?.github_url;
-            // Note: Don't use encodeURIComponent for branch names as GitHub expects slashes to remain as-is
-            const branchUrl = githubUrl ? `${githubUrl}/tree/${task.working_branch}` : null;
-
-            const branchIcon = `<svg class="branch-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>`;
-
-            if (branchUrl) {
-                branchRowHtml = `
-                    <div class="task-card-branch">
-                        <a href="${escapeHtml(branchUrl)}" target="_blank" class="branch-link" title="${escapeHtml(task.working_branch)}">
-                            ${branchIcon}
-                            <span class="branch-name">${escapeHtml(shortBranch)}</span>
-                            <svg class="external-link-icon" viewBox="0 0 16 16" fill="currentColor" width="10" height="10">
-                                <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>
-                            </svg>
-                        </a>
-                    </div>`;
-            } else {
-                branchRowHtml = `
-                    <div class="task-card-branch">
-                        <span class="branch-label" title="${escapeHtml(task.working_branch)}">
-                            ${branchIcon}
-                            <span class="branch-name">${escapeHtml(shortBranch)}</span>
-                        </span>
-                    </div>`;
-            }
+        // Build rollback button for review/blocked tasks with rollback_tag
+        let rollbackButtonHtml = '';
+        if (task.rollback_tag && (task.status === 'review' || task.status === 'blocked')) {
+            rollbackButtonHtml = `
+                <button class="btn-rollback" title="Rollback changes">
+                    <svg viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M9.78 12.78a.75.75 0 0 1-1.06 0L4.47 8.53a.75.75 0 0 1 0-1.06l4.25-4.25a.751.751 0 0 1 1.042.018.751.751 0 0 1 .018 1.042L6.06 8l3.72 3.72a.75.75 0 0 1 0 1.06Z"/>
+                    </svg>
+                    Rollback
+                </button>`;
         }
 
         // Build dropdown menu items
@@ -2244,8 +2319,7 @@ git rebase --continue
         // Build the card with new layout structure
         // - Header: priority + title
         // - Badge row: type badge (left) + status badge (right)
-        // - Branch row: branch link (only if branch exists)
-        // - Footer: LIVE button and attachment badge
+        // - Footer: LIVE button, rollback button, and attachment badge
         const badgeRowHtml = (typeBadge || statusBadge) ?
             `<div class="task-card-badges">${typeBadge}<div class="badge-spacer"></div>${statusBadge}</div>` : '';
 
@@ -2257,7 +2331,6 @@ git rebase --continue
                     <span class="task-title">${escapeHtml(task.title)}</span>
                 </div>
                 ${badgeRowHtml}
-                ${branchRowHtml}
                 <div class="task-card-footer"></div>
             </div>
         `);
@@ -2267,6 +2340,11 @@ git rebase --continue
             $card.find('.task-card-footer').append(
                 `<button class="btn-live" data-id="${task.id}">LIVE</button>`
             );
+        }
+
+        // Add rollback button for review/blocked tasks with rollback tag (Trunk-based development)
+        if (rollbackButtonHtml) {
+            $card.find('.task-card-footer').append(rollbackButtonHtml);
         }
 
         // Show attachment badge if task has attachments
@@ -2817,6 +2895,21 @@ git rebase --continue
 
         $(document).on('click', '.branch-dropdown-item', function(e) {
             e.stopPropagation();
+            const action = $(this).data('action');
+
+            // Handle "Create new branch" action
+            if (action === 'create-branch') {
+                const branchName = prompt('Enter new branch name (will be created from main):');
+                if (branchName && branchName.trim()) {
+                    const sanitized = branchName.trim().replace(/[^a-zA-Z0-9\-_\/]/g, '-');
+                    if (selectedProjectFilter) {
+                        setWorkingBranch(selectedProjectFilter, sanitized, true);
+                    }
+                }
+                return;
+            }
+
+            // Handle branch switch
             const branch = $(this).data('branch');
             if (branch && selectedProjectFilter && !$(this).hasClass('active')) {
                 switchToBranch(selectedProjectFilter, branch);
@@ -2826,6 +2919,19 @@ git rebase --continue
         $('#branchPullBtn').on('click', function(e) {
             e.stopPropagation();
             if (selectedProjectFilter) pullBranch(selectedProjectFilter);
+        });
+
+        // Push button click (Trunk-based development)
+        $('#pushBtn').on('click', function(e) {
+            e.stopPropagation();
+            if (selectedProjectFilter) pushToRemote(selectedProjectFilter);
+        });
+
+        // Rollback button click on task cards (Trunk-based development)
+        $(document).on('click', '.btn-rollback', function(e) {
+            e.stopPropagation();
+            const taskId = $(this).closest('.task-card').data('id');
+            rollbackTask(taskId);
         });
 
         // Project click in sidebar - select project and close sidebar

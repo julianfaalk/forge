@@ -96,7 +96,9 @@ func main() {
 			handler.HandleDeployTask(w, r) // Task deployen (commit & push)
 		} else if strings.HasSuffix(path, "/merge") {
 			log.Printf("[API] Routing to HandleMergeTask")
-			handler.HandleMergeTask(w, r) // Branch in main mergen
+			handler.HandleMergeTask(w, r) // Branch in main mergen (DEPRECATED)
+		} else if strings.HasSuffix(path, "/rollback") {
+			handler.HandleTaskRollback(w, r) // Trunk-based: Rollback zu Tag
 		} else if strings.HasSuffix(path, "/resolve-conflict") {
 			handler.HandleResolveConflict(w, r) // RALPH löst Merge-Konflikt
 		} else if strings.HasSuffix(path, "/attachments") {
@@ -141,6 +143,12 @@ func main() {
 			handler.HandleBranchRules(w, r) // Branch-Schutzregeln
 		} else if strings.Contains(path, "/rules/") {
 			handler.HandleBranchRule(w, r) // Einzelne Branch-Regel
+		} else if strings.HasSuffix(path, "/push-status") {
+			handler.HandleProjectPushStatus(w, r) // Trunk-based: Unpushed commits
+		} else if strings.HasSuffix(path, "/push") {
+			handler.HandleProjectPush(w, r) // Trunk-based: Push zu Remote
+		} else if strings.HasSuffix(path, "/working-branch") {
+			handler.HandleProjectSetWorkingBranch(w, r) // Trunk-based: Working Branch setzen
 		} else {
 			handler.HandleProject(w, r) // Standard GET/PUT/DELETE
 		}
