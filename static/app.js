@@ -616,6 +616,58 @@ $(document).ready(function() {
             });
     }
 
+    // Load branches for a project and populate the target branch dropdown
+    function loadBranchesForProject(projectId, workingBranch, selectedBranch) {
+        const $select = $('#taskTargetBranch');
+        $select.html('<option value="">Loading...</option>');
+
+        $.get('/api/projects/' + projectId + '/branches')
+            .done(function(data) {
+                const branches = data.branches || [];
+
+                // Sort branches: main/master first, then alphabetically
+                branches.sort(function(a, b) {
+                    // Local branches first (without origin/ prefix)
+                    const aIsLocal = !a.startsWith('origin/');
+                    const bIsLocal = !b.startsWith('origin/');
+                    if (aIsLocal && !bIsLocal) return -1;
+                    if (!aIsLocal && bIsLocal) return 1;
+
+                    // main/master priority
+                    const aIsPrimary = (a === 'main' || a === 'master');
+                    const bIsPrimary = (b === 'main' || b === 'master');
+                    if (aIsPrimary && !bIsPrimary) return -1;
+                    if (!aIsPrimary && bIsPrimary) return 1;
+
+                    // Alphabetical
+                    return a.localeCompare(b);
+                });
+
+                // Filter to only show local branches (not origin/ prefixed)
+                const localBranches = branches.filter(b => !b.startsWith('origin/'));
+
+                // Build options - default is working branch or first available
+                let html = '<option value="">Default</option>';
+                localBranches.forEach(function(branch) {
+                    const isSelected = selectedBranch ? (branch === selectedBranch) : false;
+                    const isWorking = branch === workingBranch;
+                    const label = isWorking ? branch + ' (working)' : branch;
+                    html += '<option value="' + branch + '"' + (isSelected ? ' selected' : '') + '>' + label + '</option>';
+                });
+
+                $select.html(html);
+
+                // If we have a selectedBranch but it wasn't in the list, it might be custom
+                if (selectedBranch && !localBranches.includes(selectedBranch)) {
+                    $select.val(selectedBranch);
+                }
+            })
+            .fail(function(xhr) {
+                $select.html('<option value="">Default</option>');
+                console.error('Failed to load branches:', xhr);
+            });
+    }
+
     function loadTaskTypes() {
         $.get('/api/task-types')
             .done(function(data) {
@@ -3130,7 +3182,7 @@ git rebase --continue
             }
         });
 
-        // Project change updates project_dir
+        // Project change updates project_dir and loads branches
         $('#taskProject').on('change', function() {
             const projectId = $(this).val();
             if (projectId) {
@@ -3138,9 +3190,15 @@ git rebase --continue
                 if (project) {
                     $('#taskProjectDir').val(project.path);
                     $('#projectDirGroup').addClass('hidden');
+                    // Load branches for the selected project
+                    loadBranchesForProject(projectId, project.working_branch);
+                    $('#targetBranchGroup').removeClass('hidden');
                 }
             } else {
                 $('#projectDirGroup').removeClass('hidden');
+                // Clear branch dropdown when no project selected
+                $('#taskTargetBranch').html('<option value="">Default</option>');
+                $('#targetBranchGroup').addClass('hidden');
             }
         });
 
@@ -3563,16 +3621,21 @@ git rebase --continue
         $('#taskPriority').val('2');
         $('#taskMaxIterations').val(config.default_max_iterations || 10);
         $('#taskProjectDir').val('');
+        $('#taskTargetBranch').html('<option value="">Default</option>');
 
-        // Show/hide project dir based on project selection
+        // Show/hide project dir and load branches based on project selection
         if (selectedProjectFilter) {
             const project = projects.find(p => p.id === selectedProjectFilter);
             if (project) {
                 $('#taskProjectDir').val(project.path);
                 $('#projectDirGroup').addClass('hidden');
+                // Load branches for the selected project
+                loadBranchesForProject(selectedProjectFilter, project.working_branch);
+                $('#targetBranchGroup').removeClass('hidden');
             }
         } else {
             $('#projectDirGroup').removeClass('hidden');
+            $('#targetBranchGroup').addClass('hidden');
         }
 
         $('#btnDelete').addClass('hidden');
@@ -3608,7 +3671,24 @@ git rebase --continue
             $('#projectDirGroup').removeClass('hidden');
         }
 
-        // Branch info
+        // Target branch - load options and select the saved value
+        if (task.project_id) {
+            const project = projects.find(p => p.id === task.project_id);
+            const workingBranch = project ? project.working_branch : '';
+            loadBranchesForProject(task.project_id, workingBranch, task.target_branch);
+            $('#targetBranchGroup').removeClass('hidden');
+            // Disable branch selection for running tasks
+            if (task.status === 'progress' || task.status === 'queued') {
+                $('#taskTargetBranch').prop('disabled', true);
+            } else {
+                $('#taskTargetBranch').prop('disabled', false);
+            }
+        } else {
+            $('#taskTargetBranch').html('<option value="">Default</option>');
+            $('#targetBranchGroup').addClass('hidden');
+        }
+
+        // Branch info - show current working branch for running tasks
         if (task.working_branch) {
             $('#taskBranch').text(task.working_branch);
             $('#branchInfoGroup').removeClass('hidden');
@@ -3740,7 +3820,8 @@ git rebase --continue
             task_type_id: $('#taskType').val() || '',
             priority: parseInt($('#taskPriority').val()),
             max_iterations: parseInt($('#taskMaxIterations').val()),
-            project_dir: projectDir
+            project_dir: projectDir,
+            target_branch: $('#taskTargetBranch').val() || ''
         };
 
         if (!taskData.title) {

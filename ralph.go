@@ -823,13 +823,19 @@ func (r *RalphRunner) TryStartNextQueued() {
 			project, _ = r.db.GetProject(nextTask.ProjectID)
 		}
 
-		// Use project's working branch if set
-		if project != nil && project.WorkingBranch != "" {
-			if err := EnsureOnBranch(projectDir, project.WorkingBranch); err != nil {
-				log.Printf("TryStartNextQueued: Failed to switch to working branch %s: %v", project.WorkingBranch, err)
+		// Determine target branch: Task's TargetBranch > Project's WorkingBranch
+		targetBranch := nextTask.TargetBranch
+		if targetBranch == "" && project != nil && project.WorkingBranch != "" {
+			targetBranch = project.WorkingBranch
+		}
+
+		// Switch to target branch if set
+		if targetBranch != "" {
+			if err := EnsureOnBranch(projectDir, targetBranch); err != nil {
+				log.Printf("TryStartNextQueued: Failed to switch to branch %s: %v", targetBranch, err)
 			} else {
-				r.db.UpdateTaskWorkingBranch(nextTask.ID, project.WorkingBranch)
-				nextTask.WorkingBranch = project.WorkingBranch
+				r.db.UpdateTaskWorkingBranch(nextTask.ID, targetBranch)
+				nextTask.WorkingBranch = targetBranch
 			}
 		}
 
