@@ -1,8 +1,8 @@
-# GRINDER
+# FORGE
 
 **Your AI development team that never sleeps.**
 
-GRINDER is a self-hosted task board that turns [Claude Code](https://github.com/anthropics/claude-code) into an autonomous developer. Queue up tasks, let Claude handle the implementation, review the results.
+FORGE is a self-hosted task board that turns [Claude Code](https://github.com/anthropics/claude-code) into an autonomous developer. Queue up tasks, let Claude handle the implementation, review the results.
 
 ![Kanban Board](https://img.shields.io/badge/Kanban-Board-blue) ![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go) ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -20,7 +20,7 @@ GRINDER is a self-hosted task board that turns [Claude Code](https://github.com/
 ```
 
 1. **Create a task** with a title, description, and acceptance criteria
-2. **Drag to Queue** — GRINDER picks it up automatically
+2. **Drag to Queue** — FORGE picks it up automatically
 3. **Watch Claude work** — real-time logs stream to your browser
 4. **Review & deploy** — approve changes and push to GitHub
 
@@ -47,7 +47,7 @@ Manage multiple codebases from one dashboard. Scan directories to auto-discover 
 Attach screenshots and videos to tasks. Claude can see them and use them as reference for UI work.
 
 ### Smart Queuing
-Queue multiple tasks and GRINDER processes them one by one. Failed task? It moves to Blocked and the next one starts automatically.
+Queue multiple tasks and FORGE processes them one by one. Failed task? It moves to Blocked and the next one starts automatically.
 
 ---
 
@@ -62,11 +62,11 @@ Queue multiple tasks and GRINDER processes them one by one. Failed task? It move
 
 ```bash
 # Clone the repository
-git clone https://github.com/julianfaalk/grinder.git
-cd grinder
+git clone https://github.com/julianfaalk/forge.git
+cd forge
 
 # Build and run
-go build -o grinder && ./grinder
+go build -o forge && ./forge
 ```
 
 Open [http://localhost:3333](http://localhost:3333) in your browser.
@@ -75,8 +75,8 @@ Open [http://localhost:3333](http://localhost:3333) in your browser.
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `GRINDER_PORT` | `3333` | HTTP server port |
-| `GRINDER_DB` | `grinder.db` | SQLite database path |
+| `FORGE_PORT` | `3333` | HTTP server port |
+| `FORGE_DB` | `forge.db` | SQLite database path |
 
 ---
 
@@ -124,7 +124,7 @@ Protect important branches from accidental pushes:
 
 Connect your GitHub account to:
 
-- Create repositories directly from GRINDER
+- Create repositories directly from FORGE
 - Open pull requests with one click
 - See your GitHub profile in the header
 
@@ -159,14 +159,14 @@ grinder/
 
 ## Security Notes
 
-GRINDER is designed for **local development use**:
+FORGE is designed for **local development use**:
 
 - No authentication layer — assumes trusted local environment
 - Can execute arbitrary commands via Claude Code
 - CORS is open for local development
 - GitHub tokens stored in local SQLite database
 
-**Do not expose GRINDER to the public internet.**
+**Do not expose FORGE to the public internet.**
 
 ---
 

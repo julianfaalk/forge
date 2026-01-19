@@ -1,6 +1,6 @@
-// db.go implementiert die Datenbankschicht für GRINDER.
-// Verwendet SQLite mit WAL-Modus für bessere Concurrent-Performance.
-// Alle Datenbankoperationen sind thread-safe durch einen RWMutex.
+// db.go implements the database layer for FORGE.
+// Uses SQLite with WAL mode for better concurrent performance.
+// All database operations are thread-safe via RWMutex.
 package main
 
 import (

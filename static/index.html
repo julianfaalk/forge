@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RUNNER - Autonomous Development Board</title>
+    <title>FORGE - Autonomous Development Board</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="style.css">
     <!-- Theme and sidebar initialization - MUST run before body renders to prevent flash -->
     <script>
         (function() {
             try {
-                var savedTheme = localStorage.getItem('grinder-theme') || 'dark';
+                var savedTheme = localStorage.getItem('forge-theme') || 'dark';
                 var theme = savedTheme;
                 if (savedTheme === 'system') {
                     theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -20,7 +20,7 @@
                 document.documentElement.classList.add('no-transitions');
 
                 // Load saved sidebar width for desktop (prevents flash)
-                var savedWidth = localStorage.getItem('runner-sidebar-width');
+                var savedWidth = localStorage.getItem('forge-sidebar-width');
                 if (savedWidth) {
                     var width = parseInt(savedWidth);
                     if (width >= 200 && width <= 500) {
@@ -42,7 +42,7 @@
                 </svg>
             </button>
             <span class="logo-icon" id="logoIcon">⚡️</span>
-            <h1 class="logo">RUNNER</h1>
+            <h1 class="logo">FORGE</h1>
             <div class="selected-project-display" id="selectedProjectDisplay">
                 <svg class="folder-icon-header" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.89 2 1.99 2H20c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>

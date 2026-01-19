@@ -31,7 +31,7 @@ $(document).ready(function() {
     // Load collapsed state from localStorage
     function loadCollapsedState() {
         try {
-            const saved = localStorage.getItem('grinder_collapsed_folders');
+            const saved = localStorage.getItem('forge_collapsed_folders');
             if (saved) {
                 collapsedFolders = JSON.parse(saved);
             }
@@ -43,7 +43,7 @@ $(document).ready(function() {
     // Save collapsed state to localStorage
     function saveCollapsedState() {
         try {
-            localStorage.setItem('grinder_collapsed_folders', JSON.stringify(collapsedFolders));
+            localStorage.setItem('forge_collapsed_folders', JSON.stringify(collapsedFolders));
         } catch (e) {
             // Ignore storage errors
         }
@@ -62,7 +62,7 @@ $(document).ready(function() {
      */
     function getSavedTheme() {
         try {
-            return localStorage.getItem('grinder-theme') || 'dark';
+            return localStorage.getItem('forge-theme') || 'dark';
         } catch (e) {
             return 'dark';
         }
@@ -74,7 +74,7 @@ $(document).ready(function() {
      */
     function saveTheme(theme) {
         try {
-            localStorage.setItem('grinder-theme', theme);
+            localStorage.setItem('forge-theme', theme);
         } catch (e) {
             // Ignore storage errors
         }
@@ -146,7 +146,7 @@ $(document).ready(function() {
      */
     function loadSelectedProject() {
         try {
-            return localStorage.getItem('grinder-selected-project') || '';
+            return localStorage.getItem('forge-selected-project') || '';
         } catch (e) {
             return '';
         }
@@ -158,7 +158,7 @@ $(document).ready(function() {
      */
     function saveSelectedProject(projectId) {
         try {
-            localStorage.setItem('grinder-selected-project', projectId);
+            localStorage.setItem('forge-selected-project', projectId);
         } catch (e) {
             // Ignore storage errors
         }
@@ -170,7 +170,7 @@ $(document).ready(function() {
      */
     function loadSidebarState() {
         try {
-            return localStorage.getItem('grinder-sidebar-open') === 'true';
+            return localStorage.getItem('forge-sidebar-open') === 'true';
         } catch (e) {
             return false;
         }
@@ -182,7 +182,7 @@ $(document).ready(function() {
      */
     function saveSidebarState(isOpen) {
         try {
-            localStorage.setItem('grinder-sidebar-open', isOpen ? 'true' : 'false');
+            localStorage.setItem('forge-sidebar-open', isOpen ? 'true' : 'false');
         } catch (e) {
             // Ignore storage errors
         }
@@ -1329,7 +1329,7 @@ git rebase --continue
         const timestamp = Date.now();
 
         // Check for GRINDER system messages
-        if (message.startsWith('[GRINDER]')) {
+        if (message.startsWith('[FORGE]')) {
             return {
                 type: 'system',
                 content: message,
@@ -3505,7 +3505,7 @@ git rebase --continue
         const DEFAULT_WIDTH = 280;
         const MIN_WIDTH = 200;
         const MAX_WIDTH = 500;
-        const STORAGE_KEY = 'runner-sidebar-width';
+        const STORAGE_KEY = 'forge-sidebar-width';
 
         let isResizing = false;
         let startX, startWidth;

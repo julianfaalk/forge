@@ -11,7 +11,7 @@
 *.db-shm
 *.db-wal
 *.db-journal
-grinder.db
+forge.db
 
 # -------------------------------------------
 # Environment & Secrets
@@ -60,7 +60,7 @@ build/
 *.out
 
 # Go compiled binary (project name)
-grinder
+forge
 
 # -------------------------------------------
 # Logs & Temp

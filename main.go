@@ -1,12 +1,12 @@
-// Package main ist der Einstiegspunkt für GRINDER - ein autonomes Development Board
-// zur Verwaltung von Tasks, die von Claude (RALPH) automatisch bearbeitet werden.
+// Package main is the entry point for FORGE - an autonomous development board
+// for managing tasks that are automatically processed by Claude Code.
 //
-// GRINDER ermöglicht:
-// - Task-Management mit Kanban-Board (Backlog, Progress, Review, Done, Blocked)
-// - Automatische Code-Generierung durch Claude CLI
-// - Git-Integration mit Branch-Management
-// - GitHub-Integration für Repository-Erstellung und Deployment
-// - WebSocket-basierte Echtzeit-Updates
+// FORGE enables:
+// - Task management with Kanban board (Backlog, Queue, Progress, Review, Done, Blocked)
+// - Automatic code generation via Claude CLI
+// - Git integration with branch management
+// - GitHub integration for repository creation and deployment
+// - WebSocket-based real-time updates
 package main
 
 import (
@@ -21,27 +21,27 @@ import (
 	"time"
 )
 
-// Version ist die aktuelle Version von GRINDER
+// Version is the current version of FORGE
 const Version = "0.1.0"
 
-// Standardkonfiguration für den Server
+// Default server configuration
 const (
-	defaultPort   = "3333"       // Standard-Port für den HTTP-Server
-	defaultDBPath = "grinder.db" // Standard-Pfad für die SQLite-Datenbank
+	defaultPort   = "3333"    // Default HTTP server port
+	defaultDBPath = "forge.db" // Default SQLite database path
 )
 
-// main ist der Einstiegspunkt der Anwendung.
-// Initialisiert alle Komponenten und startet den HTTP-Server.
+// main is the application entry point.
+// Initializes all components and starts the HTTP server.
 func main() {
-	// Konfiguration aus Umgebungsvariablen laden
-	// GRINDER_PORT: Port für den HTTP-Server (Standard: 3333)
-	port := os.Getenv("GRINDER_PORT")
+	// Load configuration from environment variables
+	// FORGE_PORT: HTTP server port (default: 3333)
+	port := os.Getenv("FORGE_PORT")
 	if port == "" {
 		port = defaultPort
 	}
 
-	// GRINDER_DB: Pfad zur SQLite-Datenbank (Standard: grinder.db)
-	dbPath := os.Getenv("GRINDER_DB")
+	// FORGE_DB: SQLite database path (default: forge.db)
+	dbPath := os.Getenv("FORGE_DB")
 	if dbPath == "" {
 		dbPath = defaultDBPath
 	}
@@ -176,9 +176,9 @@ func main() {
 		IdleTimeout:  60 * time.Second,    // Timeout für Keep-Alive-Verbindungen
 	}
 
-	// Startup-Banner ausgeben
+	// Print startup banner
 	fmt.Println()
-	fmt.Println("  GRINDER v1.0")
+	fmt.Println("  FORGE v" + Version)
 	fmt.Printf("  Server running on http://localhost:%s\n", port)
 	fmt.Println()
 
@@ -209,7 +209,7 @@ func main() {
 		log.Printf("Server shutdown error: %v", err)
 	}
 
-	log.Println("GRINDER stopped")
+	log.Println("FORGE stopped")
 }
 
 // recoverTasks handles intelligent task recovery on server restart.

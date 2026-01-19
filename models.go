@@ -1,5 +1,5 @@
-// models.go definiert alle Datenmodelle für GRINDER.
-// Diese Strukturen werden sowohl für die Datenbank als auch für die JSON-API verwendet.
+// models.go defines all data models for FORGE.
+// These structures are used for both the database and the JSON API.
 package main
 
 import (
@@ -28,7 +28,7 @@ const (
 // Kern-Datenmodelle
 // ============================================================================
 
-// Task repräsentiert eine Arbeitseinheit in GRINDER.
+// Task represents a work unit in FORGE.
 // Ein Task enthält alle Informationen, die RALPH (Claude) benötigt,
 // um die Aufgabe autonom zu bearbeiten.
 type Task struct {

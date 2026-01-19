@@ -175,7 +175,7 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 	}
 
 	log.Printf("Starting RALPH for task %s in directory %s", task.ID, task.ProjectDir)
-	r.hub.BroadcastLog(task.ID, "[GRINDER] Preparing to start Claude...\n")
+	r.hub.BroadcastLog(task.ID, "[FORGE] Preparing to start Claude...\n")
 
 	// Build prompt with branch protection info and attachments
 	prompt := BuildPrompt(task, protectedBranches, attachments)
@@ -216,7 +216,7 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 	}
 
 	log.Printf("Claude process started with PID %d", cmd.Process.Pid)
-	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[GRINDER] Claude started (PID %d)...\n", cmd.Process.Pid))
+	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] Claude started (PID %d)...\n", cmd.Process.Pid))
 	r.hub.BroadcastStatus(task.ID, StatusProgress, 0)
 
 	// Persist PID and timestamps for process tracking/recovery
@@ -245,7 +245,7 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 		r.cleanup(task.ID)
 
 		if ctx.Err() == context.Canceled {
-			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process stopped by user\n")
+			r.hub.BroadcastLog(task.ID, "\n[FORGE] Process stopped by user\n")
 			// Still try to start next queued task after cancellation
 			go r.TryStartNextQueued()
 			return
@@ -254,12 +254,12 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 		if err != nil {
 			exitErr, ok := err.(*exec.ExitError)
 			if ok {
-				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[GRINDER] Process exited with code %d\n", exitErr.ExitCode()))
+				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[FORGE] Process exited with code %d\n", exitErr.ExitCode()))
 			} else {
-				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[GRINDER] Process error: %v\n", err))
+				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[FORGE] Process error: %v\n", err))
 			}
 		} else {
-			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process completed\n")
+			r.hub.BroadcastLog(task.ID, "\n[FORGE] Process completed\n")
 		}
 
 		// Try to start next queued task after process cleanup
@@ -275,7 +275,7 @@ func (r *RalphRunner) Continue(task *Task, config *Config, feedback string) erro
 
 	// If already running, stop it first (we'll restart with feedback)
 	if isRunning {
-		r.hub.BroadcastLog(task.ID, "\n[GRINDER] Stopping current process to apply feedback...\n")
+		r.hub.BroadcastLog(task.ID, "\n[FORGE] Stopping current process to apply feedback...\n")
 		r.Stop(task.ID)
 		// Give it a moment to clean up
 		time.Sleep(100 * time.Millisecond)
@@ -324,7 +324,7 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 	}
 
 	log.Printf("Continuing RALPH for task %s with feedback", task.ID)
-	r.hub.BroadcastLog(task.ID, "\n[GRINDER] Continuing task with user feedback...\n")
+	r.hub.BroadcastLog(task.ID, "\n[FORGE] Continuing task with user feedback...\n")
 
 	// Get branch protection rules for the project
 	var protectedBranches []string
@@ -440,7 +440,7 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 	}
 
 	log.Printf("Claude continuation started with PID %d", cmd.Process.Pid)
-	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[GRINDER] Claude started (PID %d)...\n", cmd.Process.Pid))
+	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] Claude started (PID %d)...\n", cmd.Process.Pid))
 
 	// Send the continuation prompt via stdin and close it to signal EOF
 	go func() {
@@ -463,7 +463,7 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		r.cleanup(task.ID)
 
 		if ctx.Err() == context.Canceled {
-			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process stopped by user\n")
+			r.hub.BroadcastLog(task.ID, "\n[FORGE] Process stopped by user\n")
 			// Still try to start next queued task after cancellation
 			go r.TryStartNextQueued()
 			return
@@ -472,12 +472,12 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		if err != nil {
 			exitErr, ok := err.(*exec.ExitError)
 			if ok {
-				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[GRINDER] Process exited with code %d\n", exitErr.ExitCode()))
+				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[FORGE] Process exited with code %d\n", exitErr.ExitCode()))
 			} else {
-				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[GRINDER] Process error: %v\n", err))
+				r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[FORGE] Process error: %v\n", err))
 			}
 		} else {
-			r.hub.BroadcastLog(task.ID, "\n[GRINDER] Process completed\n")
+			r.hub.BroadcastLog(task.ID, "\n[FORGE] Process completed\n")
 		}
 
 		// Try to start next queued task after process cleanup
@@ -571,7 +571,7 @@ func (r *RalphRunner) handleSuccess(taskID string) {
 
 	r.db.UpdateTaskStatus(taskID, StatusReview)
 	r.hub.BroadcastStatus(taskID, StatusReview, 0)
-	r.hub.BroadcastLog(taskID, "\n[GRINDER] Task moved to Review\n")
+	r.hub.BroadcastLog(taskID, "\n[FORGE] Task moved to Review\n")
 
 	// Get updated task and broadcast
 	task, _ = r.db.GetTask(taskID)
@@ -586,7 +586,7 @@ func (r *RalphRunner) handleBlocked(taskID string, reason string) {
 	r.db.UpdateTaskStatus(taskID, StatusBlocked)
 	r.db.UpdateTaskError(taskID, reason)
 	r.hub.BroadcastStatus(taskID, StatusBlocked, 0)
-	r.hub.BroadcastLog(taskID, "\n[GRINDER] Task blocked\n")
+	r.hub.BroadcastLog(taskID, "\n[FORGE] Task blocked\n")
 
 	task, _ := r.db.GetTask(taskID)
 	if task != nil {
@@ -601,7 +601,7 @@ func (r *RalphRunner) handleIterationLimit(taskID string, limit int) {
 	r.db.UpdateTaskStatus(taskID, StatusBlocked)
 	r.db.UpdateTaskError(taskID, msg)
 	r.hub.BroadcastStatus(taskID, StatusBlocked, limit)
-	r.hub.BroadcastLog(taskID, fmt.Sprintf("\n[GRINDER] %s\n", msg))
+	r.hub.BroadcastLog(taskID, fmt.Sprintf("\n[FORGE] %s\n", msg))
 
 	task, _ := r.db.GetTask(taskID)
 	if task != nil {
@@ -616,7 +616,7 @@ func (r *RalphRunner) handleIterationLimit(taskID string, limit int) {
 func (r *RalphRunner) handleError(taskID string, message string) {
 	r.db.UpdateTaskStatus(taskID, StatusBlocked)
 	r.db.UpdateTaskError(taskID, message)
-	r.hub.BroadcastLog(taskID, fmt.Sprintf("[GRINDER ERROR] %s\n", message))
+	r.hub.BroadcastLog(taskID, fmt.Sprintf("[FORGE ERROR] %s\n", message))
 	r.hub.BroadcastStatus(taskID, StatusBlocked, 0)
 
 	task, _ := r.db.GetTask(taskID)
@@ -652,7 +652,7 @@ func (r *RalphRunner) Pause(taskID string) error {
 			return fmt.Errorf("failed to pause: %v", err)
 		}
 		proc.paused = true
-		r.hub.BroadcastLog(taskID, "\n[GRINDER] Process paused\n")
+		r.hub.BroadcastLog(taskID, "\n[FORGE] Process paused\n")
 	}
 
 	return nil
@@ -680,7 +680,7 @@ func (r *RalphRunner) Resume(taskID string) error {
 			return fmt.Errorf("failed to resume: %v", err)
 		}
 		proc.paused = false
-		r.hub.BroadcastLog(taskID, "\n[GRINDER] Process resumed\n")
+		r.hub.BroadcastLog(taskID, "\n[FORGE] Process resumed\n")
 	}
 
 	return nil

@@ -1,4 +1,4 @@
-module grinder
+module forge
 
 go 1.25.1
 
