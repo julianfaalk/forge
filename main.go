@@ -151,6 +151,10 @@ func main() {
 			handler.HandleProjectPush(w, r) // Trunk-based: Push zu Remote
 		} else if strings.HasSuffix(path, "/working-branch") {
 			handler.HandleProjectSetWorkingBranch(w, r) // Trunk-based: Working Branch setzen
+		} else if strings.HasSuffix(path, "/docs-status") {
+			handler.HandleDocsStatus(w, r) // Docs-Status abrufen
+		} else if strings.HasSuffix(path, "/generate-docs") {
+			handler.HandleGenerateDocs(w, r) // Docs-Generierung starten
 		} else if strings.HasSuffix(path, "/columns/reorder") {
 			handler.HandleBoardColumnsReorder(w, r) // Board columns reorder
 		} else if strings.HasSuffix(path, "/columns") {
@@ -161,6 +165,10 @@ func main() {
 			handler.HandleProject(w, r) // Standard GET/PUT/DELETE
 		}
 	})
+
+	// AI Model-Routen: CRUD für AI-Modelle
+	mux.HandleFunc("/api/ai-models", handler.HandleAIModels)
+	mux.HandleFunc("/api/ai-models/", handler.HandleAIModel)
 
 	// Task-Typ-Routen: CRUD für Task-Kategorien
 	mux.HandleFunc("/api/task-types", handler.HandleTaskTypes)

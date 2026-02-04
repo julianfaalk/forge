@@ -76,9 +76,14 @@ type Task struct {
 	// Attachments - optional screenshots/videos for visual context
 	Attachments []Attachment `json:"attachments,omitempty"` // Liste der Anhänge (Bilder/Videos)
 
+	// AI Model selection
+	ModelID   string `json:"model_id,omitempty"`   // Selected AI model ID
+	UseRunner bool   `json:"use_runner"`           // Whether to run with AI (default: true)
+
 	// Berechnete Felder für API-Responses (nicht in DB gespeichert)
 	TaskType *TaskType `json:"task_type,omitempty"` // Task-Typ-Details (bei JOIN)
 	Project  *Project  `json:"project,omitempty"`   // Projekt-Details (bei JOIN)
+	Model    *AIModel  `json:"model,omitempty"`     // AI Model Details (bei JOIN)
 }
 
 // Attachment repräsentiert einen Dateianhang (Screenshot/Video) zu einem Task.
@@ -90,6 +95,18 @@ type Attachment struct {
 	Size      int64     `json:"size"`       // Dateigröße in Bytes
 	Path      string    `json:"path"`       // Relativer Pfad zur Datei
 	CreatedAt time.Time `json:"created_at"` // Erstellungszeitpunkt
+}
+
+// AIModel repräsentiert ein konfiguriertes AI/Coding-Modell (z.B. Claude Code, Codex).
+type AIModel struct {
+	ID         string    `json:"id"`          // Eindeutige UUID
+	Name       string    `json:"name"`        // Anzeigename (z.B. "Claude Code")
+	Command    string    `json:"command"`     // CLI-Befehl (z.B. "claude", "codex")
+	ModelType  string    `json:"model_type"`  // "claude-code", "codex", "custom"
+	IsDefault  bool      `json:"is_default"`  // Nur ein Model kann Default sein
+	ConfigJSON string    `json:"config_json"` // Zusätzliche Konfiguration als JSON
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // Project repräsentiert ein Code-Projekt/Repository.
@@ -105,6 +122,10 @@ type Project struct {
 
 	// Trunk-based development: persistenter Arbeits-Branch
 	WorkingBranch string `json:"working_branch,omitempty"` // Persistenter Arbeits-Branch
+
+	// Auto-Documentation
+	DocsStatus      string     `json:"docs_status"`                 // "none", "generating", "ready", "error"
+	DocsGeneratedAt *time.Time `json:"docs_generated_at,omitempty"` // Zeitpunkt der Docs-Generierung
 
 	// Berechnete Felder (nicht in DB gespeichert, zur Laufzeit ermittelt)
 	CurrentBranch string `json:"current_branch,omitempty"` // Aktuell ausgecheckter Branch
@@ -202,6 +223,8 @@ type CreateTaskRequest struct {
 	ColumnID           string `json:"column_id"`          // Optional: Board column assignment
 	CreatedBy          string `json:"created_by"`         // Optional: Who created it
 	AssignedTo         string `json:"assigned_to"`        // Optional: Who's assigned
+	ModelID            string `json:"model_id"`           // Optional: AI Model ID
+	UseRunner          *bool  `json:"use_runner"`         // Optional: Run with AI (default: true)
 }
 
 // UpdateTaskRequest ist der Request-Body zum Aktualisieren eines Tasks.
@@ -221,6 +244,8 @@ type UpdateTaskRequest struct {
 	ColumnID           *string     `json:"column_id,omitempty"`
 	CreatedBy          *string     `json:"created_by,omitempty"`
 	AssignedTo         *string     `json:"assigned_to,omitempty"`
+	ModelID            *string     `json:"model_id,omitempty"`
+	UseRunner          *bool       `json:"use_runner,omitempty"`
 }
 
 // FeedbackRequest ist der Request-Body für Feedback an einen laufenden Task.
@@ -286,6 +311,28 @@ type CreateTaskTypeRequest struct {
 type UpdateTaskTypeRequest struct {
 	Name  *string `json:"name,omitempty"`
 	Color *string `json:"color,omitempty"`
+}
+
+// ============================================================================
+// API Request/Response Types - AI Model
+// ============================================================================
+
+// CreateAIModelRequest ist der Request-Body zum Erstellen eines AI-Modells.
+type CreateAIModelRequest struct {
+	Name       string `json:"name"`        // Pflichtfeld: Anzeigename
+	Command    string `json:"command"`     // Pflichtfeld: CLI-Befehl
+	ModelType  string `json:"model_type"`  // "claude-code", "codex", "custom"
+	IsDefault  bool   `json:"is_default"`  // Als Default setzen
+	ConfigJSON string `json:"config_json"` // Optional: Zusätzliche Config
+}
+
+// UpdateAIModelRequest ist der Request-Body zum Aktualisieren eines AI-Modells.
+type UpdateAIModelRequest struct {
+	Name       *string `json:"name,omitempty"`
+	Command    *string `json:"command,omitempty"`
+	ModelType  *string `json:"model_type,omitempty"`
+	IsDefault  *bool   `json:"is_default,omitempty"`
+	ConfigJSON *string `json:"config_json,omitempty"`
 }
 
 // ============================================================================
@@ -404,4 +451,22 @@ type UpdateBoardColumnRequest struct {
 // ReorderBoardColumnsRequest is the request body for reordering columns.
 type ReorderBoardColumnsRequest struct {
 	ColumnIDs []string `json:"column_ids"`
+}
+
+// ============================================================================
+// API Request/Response Types - AI Spec Generation
+// ============================================================================
+
+// GenerateSpecsRequest is the request body for AI-assisted task spec generation.
+type GenerateSpecsRequest struct {
+	Prompt    string `json:"prompt"`
+	ModelID   string `json:"model_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+}
+
+// GenerateSpecsResponse is the response with AI-generated task specs.
+type GenerateSpecsResponse struct {
+	Title              string `json:"title"`
+	Description        string `json:"description"`
+	AcceptanceCriteria string `json:"acceptance_criteria"`
 }

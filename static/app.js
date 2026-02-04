@@ -27,6 +27,7 @@ $(document).ready(function() {
     let lightboxIndex = 0; // Current lightbox image index
     let triageCollapsed = false; // Triage section collapsed state
     let openSidebarPanel = null; // Currently open sidebar panel ('done' or 'not_now')
+    let aiModels = []; // AI models for task execution
 
     // Initialize
     init();
@@ -534,6 +535,9 @@ $(document).ready(function() {
         // Load board columns for selected project
         loadBoardColumns(projectId);
 
+        // Check docs status for the selected project
+        checkDocsStatus(projectId);
+
         // Close sidebar if requested
         if (closeSidebarAfter !== false) {
             closeSidebar();
@@ -577,6 +581,7 @@ $(document).ready(function() {
         loadProjects();
         loadTaskTypes();
         loadTasks();
+        loadAIModels();
         connectWebSocket();
         setupEventListeners();
         setupDragAndDrop();
@@ -921,6 +926,202 @@ $(document).ready(function() {
         })
         .fail(function(xhr) {
             showToast('Error saving settings', 'error');
+        });
+    }
+
+    // ============================================================================
+    // AI MODELS
+    // ============================================================================
+
+    function loadAIModels() {
+        $.get('/api/ai-models')
+            .done(function(data) {
+                aiModels = data || [];
+                populateModelSelect();
+            })
+            .fail(function() {
+                aiModels = [];
+            });
+    }
+
+    function populateModelSelect() {
+        const $select = $('#taskModel');
+        const currentVal = $select.val();
+        $select.find('option:not(:first):not([value="none"])').remove();
+
+        const defaultModel = aiModels.find(m => m.is_default);
+        const defaultLabel = defaultModel ? ` (${defaultModel.name})` : '';
+        $select.find('option:first').text('Default' + defaultLabel);
+
+        aiModels.forEach(function(model) {
+            $select.append(`<option value="${model.id}">${model.name}</option>`);
+        });
+
+        if (currentVal) $select.val(currentVal);
+    }
+
+    function renderModelsList() {
+        const $list = $('#modelsList');
+        $list.empty();
+
+        if (aiModels.length === 0) {
+            $list.html('<p class="help-text">No models configured. Add one to get started.</p>');
+            return;
+        }
+
+        aiModels.forEach(function(model) {
+            const defaultBadge = model.is_default ? '<span class="model-badge-default">DEFAULT</span>' : '';
+            const typeBadge = `<span class="model-badge-type">${model.model_type}</span>`;
+
+            $list.append(`
+                <div class="model-item" data-model-id="${model.id}">
+                    <div class="model-item-info">
+                        <div class="model-item-name">${escapeHtml(model.name)} ${defaultBadge} ${typeBadge}</div>
+                        <div class="model-item-command">${escapeHtml(model.command)}</div>
+                    </div>
+                    <div class="model-item-actions">
+                        ${!model.is_default ? `<button class="btn btn-secondary btn-small btn-set-default-model" data-id="${model.id}" title="Set as default">&#9733;</button>` : ''}
+                        <button class="btn btn-secondary btn-small btn-edit-model" data-id="${model.id}" title="Edit">&#9998;</button>
+                        <button class="btn btn-danger btn-small btn-delete-model" data-id="${model.id}" title="Delete">&times;</button>
+                    </div>
+                </div>
+            `);
+        });
+    }
+
+    function showModelForm(model) {
+        $('#modelFormId').val(model ? model.id : '');
+        $('#modelFormName').val(model ? model.name : '');
+        $('#modelFormCommand').val(model ? model.command : '');
+        $('#modelFormType').val(model ? model.model_type : 'claude-code');
+        $('#modelFormArgs').val(model && model.config_json !== '{}' ? model.config_json : '');
+        toggleModelArgsField();
+        $('#modelForm').removeClass('hidden');
+        $('#btnAddModel').addClass('hidden');
+    }
+
+    function hideModelForm() {
+        $('#modelForm').addClass('hidden');
+        $('#btnAddModel').removeClass('hidden');
+    }
+
+    function toggleModelArgsField() {
+        const type = $('#modelFormType').val();
+        if (type === 'custom') {
+            $('#modelFormArgsGroup').show();
+        } else {
+            $('#modelFormArgsGroup').hide();
+        }
+    }
+
+    function saveModel() {
+        const id = $('#modelFormId').val();
+        const data = {
+            name: $('#modelFormName').val().trim(),
+            command: $('#modelFormCommand').val().trim(),
+            model_type: $('#modelFormType').val(),
+            config_json: $('#modelFormArgs').val().trim() || '{}'
+        };
+
+        if (!data.name || !data.command) {
+            showToast('Name and command are required', 'error');
+            return;
+        }
+
+        const url = id ? '/api/ai-models/' + id : '/api/ai-models';
+        const method = id ? 'PUT' : 'POST';
+
+        $.ajax({ url, method, contentType: 'application/json', data: JSON.stringify(data) })
+            .done(function() {
+                hideModelForm();
+                loadAIModels();
+                showToast(id ? 'Model updated' : 'Model added', 'success');
+                // Re-render after models reload
+                setTimeout(renderModelsList, 300);
+            })
+            .fail(function(xhr) {
+                showToast(xhr.responseJSON?.error || 'Error saving model', 'error');
+            });
+    }
+
+    function deleteModel(modelId) {
+        if (!confirm('Delete this AI model?')) return;
+
+        $.ajax({ url: '/api/ai-models/' + modelId, method: 'DELETE' })
+            .done(function() {
+                loadAIModels();
+                showToast('Model deleted', 'success');
+                setTimeout(renderModelsList, 300);
+            })
+            .fail(function(xhr) {
+                showToast(xhr.responseJSON?.error || 'Cannot delete model', 'error');
+            });
+    }
+
+    function setDefaultModel(modelId) {
+        $.ajax({ url: '/api/ai-models/' + modelId + '/set-default', method: 'POST' })
+            .done(function() {
+                loadAIModels();
+                showToast('Default model updated', 'success');
+                setTimeout(renderModelsList, 300);
+            })
+            .fail(function(xhr) {
+                showToast(xhr.responseJSON?.error || 'Error', 'error');
+            });
+    }
+
+    // ============================================================================
+    // DOCS BANNER
+    // ============================================================================
+
+    function checkDocsStatus(projectId) {
+        if (!projectId) {
+            $('#docsBanner').addClass('hidden');
+            return;
+        }
+
+        // Check if user dismissed the banner for this project
+        const dismissKey = 'forge-docs-dismissed-' + projectId;
+        if (localStorage.getItem(dismissKey) === 'true') {
+            $('#docsBanner').addClass('hidden');
+            return;
+        }
+
+        $.get('/api/projects/' + projectId + '/docs-status')
+            .done(function(data) {
+                if (data.status === 'none' && !data.docs_exist) {
+                    $('#docsBanner').removeClass('hidden');
+                    $('#docsBanner .docs-banner-content').show();
+                    $('#docsBannerGenerating').addClass('hidden');
+                } else if (data.status === 'generating') {
+                    $('#docsBanner').removeClass('hidden');
+                    $('#docsBanner .docs-banner-content').hide();
+                    $('#docsBannerGenerating').removeClass('hidden');
+                } else {
+                    $('#docsBanner').addClass('hidden');
+                }
+            })
+            .fail(function() {
+                $('#docsBanner').addClass('hidden');
+            });
+    }
+
+    function generateDocs(projectId) {
+        $.ajax({
+            url: '/api/projects/' + projectId + '/generate-docs',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({})
+        })
+        .done(function(data) {
+            showToast('Documentation generation started', 'success');
+            $('#docsBanner .docs-banner-content').hide();
+            $('#docsBannerGenerating').removeClass('hidden');
+            // Reload tasks to see the new docs task
+            loadTasks();
+        })
+        .fail(function(xhr) {
+            showToast(xhr.responseJSON?.error || 'Error starting docs generation', 'error');
         });
     }
 
@@ -3376,6 +3577,64 @@ git rebase --continue
             openFolderBrowser();
         });
 
+        // AI Models settings events
+        $('#btnAddModel').on('click', function() { showModelForm(null); });
+        $('#btnCancelModel').on('click', hideModelForm);
+        $('#btnSaveModel').on('click', saveModel);
+        $('#modelFormType').on('change', toggleModelArgsField);
+
+        $(document).on('click', '.btn-edit-model', function() {
+            const id = $(this).data('id');
+            const model = aiModels.find(m => m.id === id);
+            if (model) showModelForm(model);
+        });
+        $(document).on('click', '.btn-delete-model', function() {
+            deleteModel($(this).data('id'));
+        });
+        $(document).on('click', '.btn-set-default-model', function() {
+            setDefaultModel($(this).data('id'));
+        });
+
+        // Settings tabs - render models list when switching to models tab
+        $(document).on('click', '.settings-tab[data-tab="models"]', function() {
+            loadAIModels();
+            setTimeout(renderModelsList, 200);
+        });
+
+        // Use Runner toggle
+        $('#taskUseRunner').on('change', function() {
+            const checked = $(this).is(':checked');
+            $('#taskUseRunnerLabel').text(checked ? 'Enabled' : 'Disabled');
+            // If disabled, also set model to none
+            if (!checked) {
+                $('#taskModel').val('none');
+            }
+        });
+
+        // Model selector - sync with use_runner toggle
+        $('#taskModel').on('change', function() {
+            if ($(this).val() === 'none') {
+                $('#taskUseRunner').prop('checked', false);
+                $('#taskUseRunnerLabel').text('Disabled');
+            } else {
+                $('#taskUseRunner').prop('checked', true);
+                $('#taskUseRunnerLabel').text('Enabled');
+            }
+        });
+
+        // Docs Banner
+        $('#btnGenerateDocs').on('click', function() {
+            if (selectedProjectFilter) {
+                generateDocs(selectedProjectFilter);
+            }
+        });
+        $('#btnDismissDocs').on('click', function() {
+            if (selectedProjectFilter) {
+                localStorage.setItem('forge-docs-dismissed-' + selectedProjectFilter, 'true');
+            }
+            $('#docsBanner').addClass('hidden');
+        });
+
         // User profile dropdown
         $('#userProfileTrigger').on('click', function(e) {
             e.stopPropagation();
@@ -4188,6 +4447,10 @@ git rebase --continue
         $('#taskTargetBranch').html('<option value="">Default</option>');
         $('#taskAssignedTo').val('');
         $('#taskColumn').val('');
+        $('#taskModel').val('');
+        $('#taskUseRunner').prop('checked', true);
+        $('#taskUseRunnerLabel').text('Enabled');
+        populateModelSelect();
 
         // Show/hide project dir and load branches based on project selection
         if (selectedProjectFilter) {
@@ -4237,6 +4500,12 @@ git rebase --continue
         $('#taskProjectDir').val(task.project_dir || '');
         $('#taskAssignedTo').val(task.assigned_to || '');
         $('#taskColumn').val(task.column_id || '');
+        populateModelSelect();
+        $('#taskModel').val(task.model_id || '');
+        const useRunner = task.use_runner !== false;
+        $('#taskUseRunner').prop('checked', useRunner);
+        $('#taskUseRunnerLabel').text(useRunner ? 'Enabled' : 'Disabled');
+        if (!useRunner) $('#taskModel').val('none');
 
         // Populate column select if project selected
         if (task.project_id && boardColumns.length > 0) {
@@ -4392,6 +4661,9 @@ git rebase --continue
             if (project) projectDir = project.path;
         }
 
+        const modelVal = $('#taskModel').val();
+        const useRunner = $('#taskUseRunner').is(':checked');
+
         const taskData = {
             title: $('#taskTitle').val().trim(),
             description: $('#taskDescription').val(),
@@ -4403,7 +4675,9 @@ git rebase --continue
             project_dir: projectDir,
             target_branch: $('#taskTargetBranch').val() || '',
             assigned_to: $('#taskAssignedTo').val() || '',
-            column_id: $('#taskColumn').val() || ''
+            column_id: $('#taskColumn').val() || '',
+            model_id: (modelVal && modelVal !== 'none') ? modelVal : '',
+            use_runner: useRunner
         };
 
         if (!taskData.title) {
@@ -4942,6 +5216,9 @@ git rebase --continue
 
         // Clear GitHub status
         $('#settingsGithubStatus').addClass('hidden');
+
+        // Reset models form
+        hideModelForm();
 
         $('#settingsModal').addClass('active');
     }

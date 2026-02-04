@@ -186,6 +186,26 @@
         <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
 
         <main class="card-table" id="cardTable">
+            <!-- Docs Banner -->
+            <div class="docs-banner hidden" id="docsBanner">
+                <div class="docs-banner-content">
+                    <svg class="docs-banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span class="docs-banner-text">This project has no documentation.</span>
+                    <button class="btn btn-primary btn-small" id="btnGenerateDocs">Generate Docs</button>
+                    <button class="btn btn-secondary btn-small" id="btnDismissDocs">Dismiss</button>
+                </div>
+                <div class="docs-banner-generating hidden" id="docsBannerGenerating">
+                    <span class="spinner"></span>
+                    <span>Generating documentation...</span>
+                </div>
+            </div>
+
             <!-- Add Card button row -->
             <div class="card-table-toolbar">
                 <button class="btn btn-add-card" id="btnAddCard" title="Add a new card">
@@ -338,6 +358,28 @@
                                 <option value="">Default</option>
                                 <!-- Columns loaded dynamically -->
                             </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="taskModel">AI Model</label>
+                            <select id="taskModel">
+                                <option value="">Default</option>
+                                <option value="none">None - Manual Only</option>
+                                <!-- Models loaded dynamically -->
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="taskUseRunner">
+                                <span>Run with AI</span>
+                            </label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="taskUseRunner" checked>
+                                <span class="toggle-slider"></span>
+                                <span class="toggle-label" id="taskUseRunnerLabel">Enabled</span>
+                            </label>
                         </div>
                     </div>
 
@@ -615,6 +657,7 @@
                     <button class="settings-tab" data-tab="appearance">Appearance</button>
                     <button class="settings-tab" data-tab="github">GitHub</button>
                     <button class="settings-tab" data-tab="tasks">Tasks</button>
+                    <button class="settings-tab" data-tab="models">Models</button>
                 </div>
 
                 <!-- General Settings -->
@@ -714,6 +757,47 @@
                         <label for="settingsAutoArchive">Auto-archive after days</label>
                         <input type="number" id="settingsAutoArchive" value="0" min="0" max="365">
                         <p class="help-text">Automatically archive tasks in Done after X days (0 = disabled)</p>
+                    </div>
+                </div>
+
+                <!-- Models Settings -->
+                <div class="settings-content" id="settings-models">
+                    <div class="models-header">
+                        <p class="help-text">Configure AI models for autonomous task execution</p>
+                        <button type="button" id="btnAddModel" class="btn btn-primary btn-small">Add Model</button>
+                    </div>
+                    <div id="modelsList" class="models-list">
+                        <!-- Models loaded dynamically -->
+                    </div>
+                    <!-- Add/Edit Model Form (hidden by default) -->
+                    <div id="modelForm" class="model-form hidden">
+                        <input type="hidden" id="modelFormId">
+                        <div class="form-group">
+                            <label for="modelFormName">Name *</label>
+                            <input type="text" id="modelFormName" placeholder="e.g. Claude Code, Codex CLI">
+                        </div>
+                        <div class="form-group">
+                            <label for="modelFormCommand">Command *</label>
+                            <input type="text" id="modelFormCommand" placeholder="e.g. claude, codex">
+                            <p class="help-text">CLI command or full path to binary</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="modelFormType">Model Type</label>
+                            <select id="modelFormType">
+                                <option value="claude-code">Claude Code</option>
+                                <option value="codex">OpenAI Codex CLI</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="modelFormArgsGroup" style="display:none">
+                            <label for="modelFormArgs">CLI Arguments (JSON)</label>
+                            <input type="text" id="modelFormArgs" placeholder='{"args": ["--flag1", "--flag2"]}'>
+                            <p class="help-text">Custom CLI arguments as JSON</p>
+                        </div>
+                        <div class="model-form-buttons">
+                            <button type="button" id="btnCancelModel" class="btn btn-secondary btn-small">Cancel</button>
+                            <button type="button" id="btnSaveModel" class="btn btn-primary btn-small">Save Model</button>
+                        </div>
                     </div>
                 </div>
             </div>

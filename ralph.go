@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -90,6 +91,16 @@ func BuildPrompt(task *Task, protectedBranches []string, attachments []Attachmen
 		sb.WriteString("\nIf you need to make changes to a protected branch, create a feature branch first.\n\n")
 	}
 
+	// Check if docs/ folder exists in the project directory
+	if task.ProjectDir != "" {
+		docsPath := task.ProjectDir + "/docs"
+		if info, err := os.Stat(docsPath); err == nil && info.IsDir() {
+			sb.WriteString("## Documentation\n\n")
+			sb.WriteString("This project has a `docs/` folder with existing documentation.\n")
+			sb.WriteString("If your changes affect documented behavior, update the relevant documentation in `docs/`.\n\n")
+		}
+	}
+
 	sb.WriteString("## Instructions\n\n")
 	sb.WriteString("1. Analyze this task and the existing codebase\n")
 	sb.WriteString("2. Implement the solution step by step\n")
@@ -110,8 +121,90 @@ func BuildPrompt(task *Task, protectedBranches []string, attachments []Attachmen
 	return sb.String()
 }
 
+// resolveModel determines which AI model to use for a task.
+// Priority: 1. Task's model_id → 2. Default model from DB → 3. config.ClaudeCommand fallback
+func (r *RalphRunner) resolveModel(task *Task, config *Config) *AIModel {
+	// 1. Task has explicit model_id
+	if task.ModelID != "" {
+		model, err := r.db.GetAIModel(task.ModelID)
+		if err == nil && model != nil {
+			return model
+		}
+		log.Printf("Task %s has model_id %s but model not found, falling back", task.ID, task.ModelID)
+	}
+
+	// 2. Default model from DB
+	model, err := r.db.GetDefaultAIModel()
+	if err == nil && model != nil {
+		return model
+	}
+
+	// 3. Fallback: construct model from config.ClaudeCommand
+	claudeCmd := config.ClaudeCommand
+	if claudeCmd == "" {
+		claudeCmd = "claude"
+	}
+	return &AIModel{
+		ID:        "fallback",
+		Name:      "Claude Code (Fallback)",
+		Command:   claudeCmd,
+		ModelType: "claude-code",
+		IsDefault: true,
+	}
+}
+
+// buildModelCommand creates an exec.Cmd for the given AI model with appropriate flags.
+// Returns the command and a human-readable description for logging.
+func (r *RalphRunner) buildModelCommand(ctx context.Context, model *AIModel, workDir string) (*exec.Cmd, string) {
+	switch model.ModelType {
+	case "codex":
+		// OpenAI Codex CLI: codex --full-auto --quiet
+		cmd := exec.CommandContext(ctx, model.Command, "--full-auto", "--quiet")
+		cmd.Dir = workDir
+		desc := fmt.Sprintf("%s --full-auto --quiet", model.Command)
+		return cmd, desc
+
+	case "custom":
+		// Custom model: just the command, flags from config_json if needed
+		args := []string{}
+		// Parse additional args from config_json if present
+		if model.ConfigJSON != "" && model.ConfigJSON != "{}" {
+			// Simple approach: parse JSON for "args" array
+			var configMap map[string]interface{}
+			if err := json.Unmarshal([]byte(model.ConfigJSON), &configMap); err == nil {
+				if argsVal, ok := configMap["args"]; ok {
+					if argsArr, ok := argsVal.([]interface{}); ok {
+						for _, arg := range argsArr {
+							if s, ok := arg.(string); ok {
+								args = append(args, s)
+							}
+						}
+					}
+				}
+			}
+		}
+		cmd := exec.CommandContext(ctx, model.Command, args...)
+		cmd.Dir = workDir
+		desc := fmt.Sprintf("%s %s", model.Command, strings.Join(args, " "))
+		return cmd, desc
+
+	default: // "claude-code" or unknown
+		// Claude Code: --dangerously-skip-permissions --output-format stream-json --verbose
+		cmd := exec.CommandContext(ctx, model.Command, "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose")
+		cmd.Dir = workDir
+		desc := fmt.Sprintf("%s --dangerously-skip-permissions --output-format stream-json --verbose", model.Command)
+		return cmd, desc
+	}
+}
+
 // Start starts a RALPH process for a task
 func (r *RalphRunner) Start(task *Task, config *Config) {
+	// Check if task uses AI runner
+	if !task.UseRunner {
+		log.Printf("Task %s has use_runner=false, skipping RALPH", task.ID)
+		return
+	}
+
 	r.mu.Lock()
 
 	// Check if already running
@@ -168,24 +261,18 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 		attachments = nil
 	}
 
-	// Build the command
-	claudeCmd := config.ClaudeCommand
-	if claudeCmd == "" {
-		claudeCmd = "claude"
-	}
+	// Resolve AI model for this task
+	model := r.resolveModel(task, config)
 
-	log.Printf("Starting RALPH for task %s in directory %s", task.ID, task.ProjectDir)
-	r.hub.BroadcastLog(task.ID, "[FORGE] Preparing to start Claude...\n")
+	log.Printf("Starting RALPH for task %s in directory %s (model: %s)", task.ID, task.ProjectDir, model.Name)
+	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] Preparing to start %s...\n", model.Name))
 
 	// Build prompt with branch protection info and attachments
 	prompt := BuildPrompt(task, protectedBranches, attachments)
 	log.Printf("Prompt length: %d characters", len(prompt))
 
-	// Run in interactive mode (no -p flag) so we can send follow-up messages
-	// --dangerously-skip-permissions allows autonomous file operations
-	// --output-format stream-json enables real-time streaming output (requires --verbose)
-	cmd := exec.CommandContext(ctx, claudeCmd, "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose")
-	cmd.Dir = task.ProjectDir
+	// Build model-specific command with appropriate flags
+	cmd, cmdDesc := r.buildModelCommand(ctx, model, task.ProjectDir)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -209,14 +296,14 @@ func (r *RalphRunner) Start(task *Task, config *Config) {
 	proc.stdin = stdin
 
 	// Start the process
-	log.Printf("Executing: %s --dangerously-skip-permissions --output-format stream-json --verbose", claudeCmd)
+	log.Printf("Executing: %s", cmdDesc)
 	if err := cmd.Start(); err != nil {
-		r.handleError(task.ID, fmt.Sprintf("Failed to start Claude: %v", err))
+		r.handleError(task.ID, fmt.Sprintf("Failed to start %s: %v", model.Name, err))
 		return
 	}
 
-	log.Printf("Claude process started with PID %d", cmd.Process.Pid)
-	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] Claude started (PID %d)...\n", cmd.Process.Pid))
+	log.Printf("%s process started with PID %d", model.Name, cmd.Process.Pid)
+	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] %s started (PID %d)...\n", model.Name, cmd.Process.Pid))
 	r.hub.BroadcastStatus(task.ID, StatusProgress, 0)
 
 	// Persist PID and timestamps for process tracking/recovery
@@ -317,14 +404,11 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 	r.processes[task.ID] = proc
 	r.mu.Unlock()
 
-	// Build the command
-	claudeCmd := config.ClaudeCommand
-	if claudeCmd == "" {
-		claudeCmd = "claude"
-	}
+	// Resolve AI model for this task
+	model := r.resolveModel(task, config)
 
-	log.Printf("Continuing RALPH for task %s with feedback", task.ID)
-	r.hub.BroadcastLog(task.ID, "\n[FORGE] Continuing task with user feedback...\n")
+	log.Printf("Continuing RALPH for task %s with feedback (model: %s)", task.ID, model.Name)
+	r.hub.BroadcastLog(task.ID, fmt.Sprintf("\n[FORGE] Continuing task with %s...\n", model.Name))
 
 	// Get branch protection rules for the project
 	var protectedBranches []string
@@ -409,9 +493,8 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 
 	prompt := sb.String()
 
-	// Run Claude
-	cmd := exec.CommandContext(ctx, claudeCmd, "--dangerously-skip-permissions", "--output-format", "stream-json", "--verbose")
-	cmd.Dir = task.ProjectDir
+	// Build model-specific command
+	cmd, cmdDesc := r.buildModelCommand(ctx, model, task.ProjectDir)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -434,13 +517,14 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 	proc.cmd = cmd
 	proc.stdin = stdin
 
+	log.Printf("Executing: %s", cmdDesc)
 	if err := cmd.Start(); err != nil {
-		r.handleError(task.ID, fmt.Sprintf("Failed to start Claude: %v", err))
+		r.handleError(task.ID, fmt.Sprintf("Failed to start %s: %v", model.Name, err))
 		return
 	}
 
-	log.Printf("Claude continuation started with PID %d", cmd.Process.Pid)
-	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] Claude started (PID %d)...\n", cmd.Process.Pid))
+	log.Printf("%s continuation started with PID %d", model.Name, cmd.Process.Pid)
+	r.hub.BroadcastLog(task.ID, fmt.Sprintf("[FORGE] %s started (PID %d)...\n", model.Name, cmd.Process.Pid))
 
 	// Send the continuation prompt via stdin and close it to signal EOF
 	go func() {
@@ -787,8 +871,23 @@ func (r *RalphRunner) TryStartNextQueued() {
 	log.Printf("TryStartNextQueued: Starting task %s (%s) from queue position %d",
 		nextTask.ID, nextTask.Title, nextTask.QueuePosition)
 
-	// Remove from queue and update status
+	// Remove from queue
 	r.db.RemoveFromQueue(nextTask.ID)
+
+	// Check if task uses AI runner - if not, skip RALPH and move to review
+	if !nextTask.UseRunner {
+		log.Printf("TryStartNextQueued: Task %s has use_runner=false, skipping RALPH", nextTask.ID)
+		r.db.UpdateTaskStatus(nextTask.ID, StatusReview)
+		updatedTask, _ := r.db.GetTask(nextTask.ID)
+		if updatedTask != nil {
+			r.hub.BroadcastTaskUpdate(updatedTask)
+		}
+		// Try next queued task
+		go r.TryStartNextQueued()
+		return
+	}
+
+	// Update status to progress
 	r.db.UpdateTaskStatus(nextTask.ID, StatusProgress)
 	r.db.ResetTaskForProgress(nextTask.ID)
 

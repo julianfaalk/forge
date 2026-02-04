@@ -479,6 +479,91 @@ func (d *Database) runMigrations() error {
 		log.Printf("Migration 13 completed: Created default columns for %d projects", len(projectIDs))
 	}
 
+	// ========== Migration 14: AI Models Table + Task model_id/use_runner ==========
+	if version < 14 {
+		log.Println("Running migration 14: Creating ai_models table and adding model fields to tasks")
+		migration14 := `
+		CREATE TABLE IF NOT EXISTS ai_models (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			command TEXT NOT NULL,
+			model_type TEXT NOT NULL DEFAULT 'claude-code',
+			is_default INTEGER DEFAULT 0,
+			config_json TEXT DEFAULT '{}',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		`
+		if _, err := d.db.Exec(migration14); err != nil {
+			return err
+		}
+
+		// Add model_id and use_runner columns to tasks
+		taskColumns := []struct {
+			name string
+			def  string
+		}{
+			{"model_id", "TEXT DEFAULT ''"},
+			{"use_runner", "INTEGER DEFAULT 1"},
+		}
+		for _, col := range taskColumns {
+			query := "ALTER TABLE tasks ADD COLUMN " + col.name + " " + col.def
+			if _, err := d.db.Exec(query); err != nil {
+				log.Printf("Note: Column tasks.%s may already exist: %v", col.name, err)
+			}
+		}
+
+		// Seed: Read current config.claude_command and insert as default model
+		var claudeCmd string
+		err := d.db.QueryRow("SELECT COALESCE(claude_command, 'claude') FROM config WHERE id = 1").Scan(&claudeCmd)
+		if err != nil {
+			claudeCmd = "claude"
+		}
+		if claudeCmd == "" {
+			claudeCmd = "claude"
+		}
+
+		defaultModelID := uuid.New().String()
+		_, err = d.db.Exec(`
+			INSERT INTO ai_models (id, name, command, model_type, is_default, config_json, created_at, updated_at)
+			VALUES (?, 'Claude Code', ?, 'claude-code', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`, defaultModelID, claudeCmd)
+		if err != nil {
+			log.Printf("Warning: Failed to seed default AI model: %v", err)
+		}
+
+		_, err = d.db.Exec("INSERT INTO schema_version (version) VALUES (14)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 14 completed")
+	}
+
+	// ========== Migration 15: Auto-Documentation fields on Projects ==========
+	if version < 15 {
+		log.Println("Running migration 15: Adding docs fields to projects")
+
+		projectColumns := []struct {
+			name string
+			def  string
+		}{
+			{"docs_status", "TEXT DEFAULT 'none'"},
+			{"docs_generated_at", "DATETIME"},
+		}
+		for _, col := range projectColumns {
+			query := "ALTER TABLE projects ADD COLUMN " + col.name + " " + col.def
+			if _, err := d.db.Exec(query); err != nil {
+				log.Printf("Note: Column projects.%s may already exist: %v", col.name, err)
+			}
+		}
+
+		_, err := d.db.Exec("INSERT INTO schema_version (version) VALUES (15)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 15 completed")
+	}
+
 	return nil
 }
 
@@ -504,6 +589,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       COALESCE(t.continue_message, ''),
 		       COALESCE(t.column_id, ''), COALESCE(t.created_by, ''), COALESCE(t.assigned_to, ''),
+		       COALESCE(t.model_id, ''), COALESCE(t.use_runner, 1),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -520,6 +606,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		var ttID, ttName, ttColor sql.NullString
 		var ttIsSystem sql.NullBool
 		var startedAt, finishedAt sql.NullTime
+		var useRunnerInt int
 		err := rows.Scan(
 			&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
@@ -532,11 +619,13 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 			&t.RollbackTag, &t.CommitHash,
 			&t.ContinueMessage,
 			&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
+			&t.ModelID, &useRunnerInt,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
 			return nil, err
 		}
+		t.UseRunner = useRunnerInt != 0
 		if startedAt.Valid {
 			t.StartedAt = &startedAt.Time
 		}
@@ -568,6 +657,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 	var ttID, ttName, ttColor sql.NullString
 	var ttIsSystem sql.NullBool
 	var startedAt, finishedAt sql.NullTime
+	var useRunnerInt int
 	err := d.db.QueryRow(`
 		SELECT t.id, t.title, t.description, t.acceptance_criteria, t.status, t.priority,
 		       t.current_iteration, t.max_iterations, t.logs, t.error, t.project_dir,
@@ -580,6 +670,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       COALESCE(t.continue_message, ''),
 		       COALESCE(t.column_id, ''), COALESCE(t.created_by, ''), COALESCE(t.assigned_to, ''),
+		       COALESCE(t.model_id, ''), COALESCE(t.use_runner, 1),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -596,6 +687,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&t.RollbackTag, &t.CommitHash,
 		&t.ContinueMessage,
 		&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
+		&t.ModelID, &useRunnerInt,
 		&ttID, &ttName, &ttColor, &ttIsSystem,
 	)
 	if err == sql.ErrNoRows {
@@ -604,6 +696,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	t.UseRunner = useRunnerInt != 0
 	if startedAt.Valid {
 		t.StartedAt = &startedAt.Time
 	}
@@ -638,6 +731,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       COALESCE(t.continue_message, ''),
 		       COALESCE(t.column_id, ''), COALESCE(t.created_by, ''), COALESCE(t.assigned_to, ''),
+		       COALESCE(t.model_id, ''), COALESCE(t.use_runner, 1),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -655,6 +749,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		var ttID, ttName, ttColor sql.NullString
 		var ttIsSystem sql.NullBool
 		var startedAt, finishedAt sql.NullTime
+		var useRunnerInt int
 		err := rows.Scan(
 			&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
 			&t.Status, &t.Priority, &t.CurrentIteration, &t.MaxIterations,
@@ -667,11 +762,13 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 			&t.RollbackTag, &t.CommitHash,
 			&t.ContinueMessage,
 			&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
+			&t.ModelID, &useRunnerInt,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
 			return nil, err
 		}
+		t.UseRunner = useRunnerInt != 0
 		if startedAt.Valid {
 			t.StartedAt = &startedAt.Time
 		}
@@ -698,6 +795,11 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	useRunner := true
+	if req.UseRunner != nil {
+		useRunner = *req.UseRunner
+	}
+
 	task := &Task{
 		ID:                 uuid.New().String(),
 		Title:              req.Title,
@@ -714,6 +816,8 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		ColumnID:           req.ColumnID,
 		CreatedBy:          req.CreatedBy,
 		AssignedTo:         req.AssignedTo,
+		ModelID:            req.ModelID,
+		UseRunner:          useRunner,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
@@ -729,17 +833,24 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		task.ProjectDir = config.DefaultProjectDir
 	}
 
+	useRunnerInt := 0
+	if task.UseRunner {
+		useRunnerInt = 1
+	}
+
 	_, err := d.db.Exec(`
 		INSERT INTO tasks (id, title, description, acceptance_criteria, status,
 		                   priority, current_iteration, max_iterations, logs,
 		                   error, project_dir, project_id, task_type_id, working_branch,
-		                   target_branch, column_id, created_by, assigned_to, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   target_branch, column_id, created_by, assigned_to,
+		                   model_id, use_runner, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		task.ID, task.Title, task.Description, task.AcceptanceCriteria,
 		task.Status, task.Priority, task.CurrentIteration, task.MaxIterations,
 		task.Logs, task.Error, task.ProjectDir, task.ProjectID, task.TaskTypeID,
 		task.WorkingBranch, task.TargetBranch, task.ColumnID, task.CreatedBy, task.AssignedTo,
+		task.ModelID, useRunnerInt,
 		task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
@@ -757,6 +868,7 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 
 	// Aktuellen Task laden
 	var t Task
+	var useRunnerInt int
 	err := d.db.QueryRow(`
 		SELECT id, title, description, acceptance_criteria, status, priority,
 		       current_iteration, max_iterations, logs, error, project_dir,
@@ -764,7 +876,8 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
 		       COALESCE(target_branch, ''),
 		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
-		       COALESCE(column_id, ''), COALESCE(created_by, ''), COALESCE(assigned_to, '')
+		       COALESCE(column_id, ''), COALESCE(created_by, ''), COALESCE(assigned_to, ''),
+		       COALESCE(model_id, ''), COALESCE(use_runner, 1)
 		FROM tasks WHERE id = ?
 	`, id).Scan(
 		&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
@@ -774,7 +887,9 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		&t.TargetBranch,
 		&t.ConflictPRURL, &t.ConflictPRNumber,
 		&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
+		&t.ModelID, &useRunnerInt,
 	)
+	t.UseRunner = useRunnerInt != 0
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -825,20 +940,33 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 	if req.AssignedTo != nil {
 		t.AssignedTo = *req.AssignedTo
 	}
+	if req.ModelID != nil {
+		t.ModelID = *req.ModelID
+	}
+	if req.UseRunner != nil {
+		t.UseRunner = *req.UseRunner
+	}
 	t.UpdatedAt = time.Now()
+
+	useRunnerInt = 0
+	if t.UseRunner {
+		useRunnerInt = 1
+	}
 
 	_, err = d.db.Exec(`
 		UPDATE tasks SET
 			title = ?, description = ?, acceptance_criteria = ?, status = ?,
 			priority = ?, max_iterations = ?, project_dir = ?,
 			project_id = ?, task_type_id = ?, working_branch = ?, target_branch = ?,
-			column_id = ?, created_by = ?, assigned_to = ?, updated_at = ?
+			column_id = ?, created_by = ?, assigned_to = ?,
+			model_id = ?, use_runner = ?, updated_at = ?
 		WHERE id = ?
 	`,
 		t.Title, t.Description, t.AcceptanceCriteria, t.Status,
 		t.Priority, t.MaxIterations, t.ProjectDir,
 		t.ProjectID, t.TaskTypeID, t.WorkingBranch, t.TargetBranch,
-		t.ColumnID, t.CreatedBy, t.AssignedTo, t.UpdatedAt, t.ID,
+		t.ColumnID, t.CreatedBy, t.AssignedTo,
+		t.ModelID, useRunnerInt, t.UpdatedAt, t.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -1269,6 +1397,7 @@ func (d *Database) GetAllProjects() ([]Project, error) {
 	rows, err := d.db.Query(`
 		SELECT p.id, p.name, p.path, p.description, p.is_auto_detected, p.created_at, p.updated_at,
 		       COALESCE(p.working_branch, ''),
+		       COALESCE(p.docs_status, 'none'), p.docs_generated_at,
 		       (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as task_count
 		FROM projects p
 		ORDER BY p.name ASC
@@ -1281,10 +1410,15 @@ func (d *Database) GetAllProjects() ([]Project, error) {
 	var projects []Project
 	for rows.Next() {
 		var p Project
+		var docsGeneratedAt sql.NullTime
 		err := rows.Scan(
 			&p.ID, &p.Name, &p.Path, &p.Description, &p.IsAutoDetected,
-			&p.CreatedAt, &p.UpdatedAt, &p.WorkingBranch, &p.TaskCount,
+			&p.CreatedAt, &p.UpdatedAt, &p.WorkingBranch,
+			&p.DocsStatus, &docsGeneratedAt, &p.TaskCount,
 		)
+		if docsGeneratedAt.Valid {
+			p.DocsGeneratedAt = &docsGeneratedAt.Time
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1307,16 +1441,22 @@ func (d *Database) GetProject(id string) (*Project, error) {
 	defer d.mu.RUnlock()
 
 	var p Project
+	var docsGeneratedAt sql.NullTime
 	err := d.db.QueryRow(`
 		SELECT p.id, p.name, p.path, p.description, p.is_auto_detected, p.created_at, p.updated_at,
 		       COALESCE(p.working_branch, ''),
+		       COALESCE(p.docs_status, 'none'), p.docs_generated_at,
 		       (SELECT COUNT(*) FROM tasks WHERE project_id = p.id) as task_count
 		FROM projects p
 		WHERE p.id = ?
 	`, id).Scan(
 		&p.ID, &p.Name, &p.Path, &p.Description, &p.IsAutoDetected,
-		&p.CreatedAt, &p.UpdatedAt, &p.WorkingBranch, &p.TaskCount,
+		&p.CreatedAt, &p.UpdatedAt, &p.WorkingBranch,
+		&p.DocsStatus, &docsGeneratedAt, &p.TaskCount,
 	)
+	if docsGeneratedAt.Valid {
+		p.DocsGeneratedAt = &docsGeneratedAt.Time
+	}
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -2158,4 +2298,263 @@ func (d *Database) ReorderBoardColumns(projectID string, columnIDs []string) err
 		}
 	}
 	return nil
+}
+
+// ============================================================================
+// AI Model CRUD Operations
+// ============================================================================
+
+// GetAllAIModels gibt alle AI-Modelle zurück, sortiert nach is_default DESC, name ASC.
+func (d *Database) GetAllAIModels() ([]AIModel, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query(`
+		SELECT id, name, command, model_type, is_default, config_json, created_at, updated_at
+		FROM ai_models
+		ORDER BY is_default DESC, name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var models []AIModel
+	for rows.Next() {
+		var m AIModel
+		var isDefault int
+		err := rows.Scan(&m.ID, &m.Name, &m.Command, &m.ModelType, &isDefault, &m.ConfigJSON, &m.CreatedAt, &m.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		m.IsDefault = isDefault != 0
+		models = append(models, m)
+	}
+
+	return models, rows.Err()
+}
+
+// GetAIModel gibt ein einzelnes AI-Modell anhand seiner ID zurück.
+func (d *Database) GetAIModel(id string) (*AIModel, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var m AIModel
+	var isDefault int
+	err := d.db.QueryRow(`
+		SELECT id, name, command, model_type, is_default, config_json, created_at, updated_at
+		FROM ai_models WHERE id = ?
+	`, id).Scan(&m.ID, &m.Name, &m.Command, &m.ModelType, &isDefault, &m.ConfigJSON, &m.CreatedAt, &m.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.IsDefault = isDefault != 0
+	return &m, nil
+}
+
+// GetDefaultAIModel gibt das Default-AI-Modell zurück.
+func (d *Database) GetDefaultAIModel() (*AIModel, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	var m AIModel
+	var isDefault int
+	err := d.db.QueryRow(`
+		SELECT id, name, command, model_type, is_default, config_json, created_at, updated_at
+		FROM ai_models WHERE is_default = 1 LIMIT 1
+	`).Scan(&m.ID, &m.Name, &m.Command, &m.ModelType, &isDefault, &m.ConfigJSON, &m.CreatedAt, &m.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.IsDefault = isDefault != 0
+	return &m, nil
+}
+
+// CreateAIModel erstellt ein neues AI-Modell.
+func (d *Database) CreateAIModel(req CreateAIModelRequest) (*AIModel, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	model := &AIModel{
+		ID:         uuid.New().String(),
+		Name:       req.Name,
+		Command:    req.Command,
+		ModelType:  req.ModelType,
+		IsDefault:  req.IsDefault,
+		ConfigJSON: req.ConfigJSON,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	if model.ModelType == "" {
+		model.ModelType = "custom"
+	}
+	if model.ConfigJSON == "" {
+		model.ConfigJSON = "{}"
+	}
+
+	// If this is default, unset all others
+	if model.IsDefault {
+		d.db.Exec("UPDATE ai_models SET is_default = 0")
+	}
+
+	isDefault := 0
+	if model.IsDefault {
+		isDefault = 1
+	}
+
+	_, err := d.db.Exec(`
+		INSERT INTO ai_models (id, name, command, model_type, is_default, config_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, model.ID, model.Name, model.Command, model.ModelType, isDefault, model.ConfigJSON, model.CreatedAt, model.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return model, nil
+}
+
+// UpdateAIModel aktualisiert ein bestehendes AI-Modell.
+func (d *Database) UpdateAIModel(id string, req UpdateAIModelRequest) (*AIModel, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var m AIModel
+	var isDefaultInt int
+	err := d.db.QueryRow(`
+		SELECT id, name, command, model_type, is_default, config_json, created_at, updated_at
+		FROM ai_models WHERE id = ?
+	`, id).Scan(&m.ID, &m.Name, &m.Command, &m.ModelType, &isDefaultInt, &m.ConfigJSON, &m.CreatedAt, &m.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	m.IsDefault = isDefaultInt != 0
+
+	if req.Name != nil {
+		m.Name = *req.Name
+	}
+	if req.Command != nil {
+		m.Command = *req.Command
+	}
+	if req.ModelType != nil {
+		m.ModelType = *req.ModelType
+	}
+	if req.IsDefault != nil {
+		m.IsDefault = *req.IsDefault
+	}
+	if req.ConfigJSON != nil {
+		m.ConfigJSON = *req.ConfigJSON
+	}
+	m.UpdatedAt = time.Now()
+
+	// If setting as default, unset all others
+	if m.IsDefault {
+		d.db.Exec("UPDATE ai_models SET is_default = 0 WHERE id != ?", id)
+	}
+
+	isDefault := 0
+	if m.IsDefault {
+		isDefault = 1
+	}
+
+	_, err = d.db.Exec(`
+		UPDATE ai_models SET name = ?, command = ?, model_type = ?, is_default = ?, config_json = ?, updated_at = ?
+		WHERE id = ?
+	`, m.Name, m.Command, m.ModelType, isDefault, m.ConfigJSON, m.UpdatedAt, m.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &m, nil
+}
+
+// DeleteAIModel löscht ein AI-Modell.
+// Das Default-Modell oder das letzte Modell kann nicht gelöscht werden.
+func (d *Database) DeleteAIModel(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Check if it's the default or last model
+	var isDefault int
+	var totalCount int
+	err := d.db.QueryRow("SELECT is_default FROM ai_models WHERE id = ?", id).Scan(&isDefault)
+	if err != nil {
+		return err
+	}
+	d.db.QueryRow("SELECT COUNT(*) FROM ai_models").Scan(&totalCount)
+
+	if totalCount <= 1 {
+		return fmt.Errorf("cannot delete the last AI model")
+	}
+	if isDefault != 0 {
+		return fmt.Errorf("cannot delete the default AI model - set another model as default first")
+	}
+
+	// Reset model_id on tasks that use this model
+	_, err = d.db.Exec("UPDATE tasks SET model_id = '' WHERE model_id = ?", id)
+	if err != nil {
+		return err
+	}
+
+	_, err = d.db.Exec("DELETE FROM ai_models WHERE id = ?", id)
+	return err
+}
+
+// SetDefaultAIModel setzt ein Model als Default und alle anderen auf non-default.
+func (d *Database) SetDefaultAIModel(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Verify model exists
+	var count int
+	err := d.db.QueryRow("SELECT COUNT(*) FROM ai_models WHERE id = ?", id).Scan(&count)
+	if err != nil || count == 0 {
+		return fmt.Errorf("AI model not found")
+	}
+
+	// Unset all defaults
+	_, err = d.db.Exec("UPDATE ai_models SET is_default = 0")
+	if err != nil {
+		return err
+	}
+
+	// Set new default
+	_, err = d.db.Exec("UPDATE ai_models SET is_default = 1, updated_at = ? WHERE id = ?", time.Now(), id)
+	return err
+}
+
+// ============================================================================
+// Project Docs Operations
+// ============================================================================
+
+// UpdateProjectDocsStatus aktualisiert den Docs-Status eines Projekts.
+func (d *Database) UpdateProjectDocsStatus(id string, status string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	_, err := d.db.Exec(`
+		UPDATE projects SET docs_status = ?, updated_at = ? WHERE id = ?
+	`, status, time.Now(), id)
+	return err
+}
+
+// UpdateProjectDocsGenerated setzt den Docs-Status auf "ready" und den Zeitpunkt.
+func (d *Database) UpdateProjectDocsGenerated(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	now := time.Now()
+	_, err := d.db.Exec(`
+		UPDATE projects SET docs_status = 'ready', docs_generated_at = ?, updated_at = ? WHERE id = ?
+	`, now, now, id)
+	return err
 }

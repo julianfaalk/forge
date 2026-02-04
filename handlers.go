@@ -2156,6 +2156,274 @@ func (h *Handler) DeleteTaskAttachments(taskID string) error {
 }
 
 // ============================================================================
+// AI Model Handlers
+// ============================================================================
+
+// HandleAIModels handles GET /api/ai-models and POST /api/ai-models
+func (h *Handler) HandleAIModels(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		models, err := h.db.GetAllAIModels()
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to get AI models: "+err.Error())
+			return
+		}
+		if models == nil {
+			models = []AIModel{}
+		}
+		h.writeJSON(w, http.StatusOK, models)
+
+	case http.MethodPost:
+		var req CreateAIModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+			return
+		}
+
+		if req.Name == "" {
+			h.writeError(w, http.StatusBadRequest, "Name is required")
+			return
+		}
+		if req.Command == "" {
+			h.writeError(w, http.StatusBadRequest, "Command is required")
+			return
+		}
+
+		model, err := h.db.CreateAIModel(req)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to create AI model: "+err.Error())
+			return
+		}
+
+		h.writeJSON(w, http.StatusCreated, model)
+
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// HandleAIModel handles GET/PUT/DELETE /api/ai-models/{id}
+func (h *Handler) HandleAIModel(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/ai-models/")
+
+	// Check for set-default action
+	if strings.HasSuffix(id, "/set-default") {
+		id = strings.TrimSuffix(id, "/set-default")
+		h.handleSetDefaultAIModel(w, r, id)
+		return
+	}
+
+	if id == "" {
+		h.writeError(w, http.StatusBadRequest, "AI model ID required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		model, err := h.db.GetAIModel(id)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to get AI model: "+err.Error())
+			return
+		}
+		if model == nil {
+			h.writeError(w, http.StatusNotFound, "AI model not found")
+			return
+		}
+		h.writeJSON(w, http.StatusOK, model)
+
+	case http.MethodPut:
+		var req UpdateAIModelRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+			return
+		}
+
+		model, err := h.db.UpdateAIModel(id, req)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to update AI model: "+err.Error())
+			return
+		}
+		if model == nil {
+			h.writeError(w, http.StatusNotFound, "AI model not found")
+			return
+		}
+
+		h.writeJSON(w, http.StatusOK, model)
+
+	case http.MethodDelete:
+		if err := h.db.DeleteAIModel(id); err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// handleSetDefaultAIModel handles POST /api/ai-models/{id}/set-default
+func (h *Handler) handleSetDefaultAIModel(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	if err := h.db.SetDefaultAIModel(id); err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	model, _ := h.db.GetAIModel(id)
+	h.writeJSON(w, http.StatusOK, model)
+}
+
+// ============================================================================
+// Auto-Documentation Handlers
+// ============================================================================
+
+// HandleDocsStatus handles GET /api/projects/{id}/docs-status
+func (h *Handler) HandleDocsStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	projectID := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(projectID)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	// Supplement DB status with filesystem check
+	docsPath := filepath.Join(project.Path, "docs")
+	docsExistOnDisk := false
+	if info, err := os.Stat(docsPath); err == nil && info.IsDir() {
+		docsExistOnDisk = true
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":           project.DocsStatus,
+		"generated_at":     project.DocsGeneratedAt,
+		"docs_exist":       docsExistOnDisk,
+	})
+}
+
+// HandleGenerateDocs handles POST /api/projects/{id}/generate-docs
+func (h *Handler) HandleGenerateDocs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	projectID := extractProjectID(r.URL.Path)
+	project, err := h.db.GetProject(projectID)
+	if err != nil || project == nil {
+		h.writeError(w, http.StatusNotFound, "Project not found")
+		return
+	}
+
+	// Set docs_status to generating
+	h.db.UpdateProjectDocsStatus(projectID, "generating")
+
+	// Broadcast project update
+	updatedProject, _ := h.db.GetProject(projectID)
+	if updatedProject != nil {
+		h.hub.BroadcastProjectUpdate(updatedProject)
+	}
+
+	// Get config
+	config, err := h.db.GetConfig()
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to get config: "+err.Error())
+		return
+	}
+
+	// Create a task for docs generation
+	useRunner := true
+	docsTask, err := h.db.CreateTask(CreateTaskRequest{
+		Title:         "Generate Project Documentation",
+		Description:   BuildDocsPrompt(project),
+		MaxIterations: 20,
+		ProjectID:     projectID,
+		ProjectDir:    project.Path,
+		UseRunner:     &useRunner,
+	}, config)
+	if err != nil {
+		h.db.UpdateProjectDocsStatus(projectID, "error")
+		h.writeError(w, http.StatusInternalServerError, "Failed to create docs task: "+err.Error())
+		return
+	}
+
+	// Set task to progress immediately
+	h.db.UpdateTaskStatus(docsTask.ID, StatusProgress)
+	h.db.ResetTaskForProgress(docsTask.ID)
+	docsTask.Status = StatusProgress
+	docsTask.ProjectDir = project.Path
+
+	h.hub.BroadcastTaskUpdate(docsTask)
+
+	// Start RALPH for docs generation
+	go func() {
+		h.runner.Start(docsTask, config)
+		// After completion, update docs status
+		finalTask, _ := h.db.GetTask(docsTask.ID)
+		if finalTask != nil && finalTask.Status == StatusReview {
+			h.db.UpdateProjectDocsGenerated(projectID)
+		} else {
+			h.db.UpdateProjectDocsStatus(projectID, "error")
+		}
+		// Broadcast project update
+		proj, _ := h.db.GetProject(projectID)
+		if proj != nil {
+			h.hub.BroadcastProjectUpdate(proj)
+		}
+	}()
+
+	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "generating",
+		"task_id": docsTask.ID,
+	})
+}
+
+// BuildDocsPrompt creates a prompt for comprehensive documentation generation.
+func BuildDocsPrompt(project *Project) string {
+	return fmt.Sprintf(`# Generate Comprehensive Project Documentation
+
+## Project: %s
+## Path: %s
+
+Analyze the entire codebase and create comprehensive documentation in a "docs/" folder.
+
+## Your Task:
+
+1. **Analyze the entire codebase** - Read all source files, understand the architecture, dependencies, and how components interact.
+
+2. **Create the following documentation files:**
+
+   - **docs/README.md** - Project overview, what it does, how to set it up, how to run it
+   - **docs/architecture.md** - System architecture, folder structure, key design decisions, data flow
+   - **docs/api.md** - All API endpoints (if applicable), request/response formats, examples
+   - **docs/development.md** - Development setup, coding conventions, how to contribute, testing
+
+3. **Documentation Quality:**
+   - Write clear, well-structured Markdown
+   - Include code examples where helpful
+   - Use proper headings and table of contents
+   - Be thorough but concise
+   - Focus on what a new developer would need to understand the project
+
+4. **Important:**
+   - Create the docs/ directory if it doesn't exist
+   - Do NOT modify any source code
+   - Only create/modify files inside the docs/ directory
+
+When complete, output [SUCCESS].
+`, project.Name, project.Path)
+}
+
+// ============================================================================
 // Trunk-Based Development Handlers
 // ============================================================================
 
