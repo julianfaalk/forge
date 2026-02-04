@@ -80,6 +80,7 @@ func main() {
 
 	// Task-Routen: CRUD-Operationen für Tasks
 	mux.HandleFunc("/api/tasks", handler.HandleTasks)
+	mux.HandleFunc("/api/tasks/generate-specs", handler.HandleGenerateTaskSpecs)
 	mux.HandleFunc("/api/tasks/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		log.Printf("[API] %s %s", r.Method, path)

@@ -276,6 +276,27 @@
                 <form id="taskForm">
                     <input type="hidden" id="taskId">
 
+                    <!-- AI Assist Section -->
+                    <div class="ai-assist-section" id="aiAssistSection">
+                        <button type="button" class="ai-assist-toggle" id="aiAssistToggle">
+                            <span class="ai-assist-toggle-icon">&#10024;</span>
+                            <span>AI Assist</span>
+                            <svg class="ai-assist-chevron" viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+                                <path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"/>
+                            </svg>
+                        </button>
+                        <div class="ai-assist-body hidden" id="aiAssistBody">
+                            <textarea id="aiAssistPrompt" rows="3" placeholder="Describe your idea roughly... e.g. 'add dark mode toggle to settings page'"></textarea>
+                            <div class="ai-assist-footer">
+                                <p class="help-text">Uses selected AI model to generate specs</p>
+                                <button type="button" id="btnGenerateSpecs" class="btn btn-primary btn-small">
+                                    <span class="btn-text" id="generateSpecsBtnText">Generate Specs</span>
+                                    <span class="spinner hidden" id="aiAssistSpinner"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label for="taskTitle">Title *</label>
                         <input type="text" id="taskTitle" required>

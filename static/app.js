@@ -28,6 +28,7 @@ $(document).ready(function() {
     let triageCollapsed = false; // Triage section collapsed state
     let openSidebarPanel = null; // Currently open sidebar panel ('done' or 'not_now')
     let aiModels = []; // AI models for task execution
+    let aiAssistOpen = false; // AI Assist section toggle state
 
     // Initialize
     init();
@@ -4482,12 +4483,25 @@ git rebase --continue
         pendingAttachments = [];
         $('#pendingAttachmentList').empty();
 
+        // Reset AI Assist for new tasks
+        aiAssistOpen = false;
+        $('#aiAssistBody').addClass('hidden');
+        $('#aiAssistToggle').removeClass('open');
+        $('#aiAssistPrompt').val('');
+        $('#generateSpecsBtnText').text('Generate Specs');
+        $('#aiAssistSpinner').addClass('hidden');
+        $('#btnGenerateSpecs').prop('disabled', false);
+        $('#aiAssistSection').removeClass('hidden');
+
         $('#taskModal').addClass('active');
         $('#taskTitle').focus();
     }
 
     function openEditTaskModal(task) {
         currentTaskId = task.id;
+        // Hide AI Assist for existing tasks
+        $('#aiAssistSection').addClass('hidden');
+
         $('#modalTitle').text('Edit Task');
         $('#taskId').val(task.id);
         $('#taskTitle').val(task.title);
@@ -6167,6 +6181,92 @@ git rebase --continue
             closeSearch();
         }
     });
+
+    // ============================================================================
+    // AI ASSIST - Spec Generation
+    // ============================================================================
+
+    // Toggle AI Assist section
+    $(document).on('click', '#aiAssistToggle', function() {
+        aiAssistOpen = !aiAssistOpen;
+        if (aiAssistOpen) {
+            $('#aiAssistBody').removeClass('hidden');
+            $('#aiAssistToggle').addClass('open');
+            $('#aiAssistPrompt').focus();
+        } else {
+            $('#aiAssistBody').addClass('hidden');
+            $('#aiAssistToggle').removeClass('open');
+        }
+    });
+
+    // Generate Specs button
+    $(document).on('click', '#btnGenerateSpecs', function() {
+        generateTaskSpecs();
+    });
+
+    // Allow Ctrl+Enter in AI Assist textarea to trigger generation
+    $(document).on('keydown', '#aiAssistPrompt', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            generateTaskSpecs();
+        }
+    });
+
+    function generateTaskSpecs() {
+        const prompt = $('#aiAssistPrompt').val().trim();
+        if (!prompt) return;
+
+        const modelId = $('#taskModel').val() || '';
+        const projectId = $('#taskProject').val() || '';
+
+        // Show spinner, disable button
+        $('#aiAssistSpinner').removeClass('hidden');
+        $('#generateSpecsBtnText').text('Generating...');
+        $('#btnGenerateSpecs').prop('disabled', true);
+
+        $.ajax({
+            url: '/api/tasks/generate-specs',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                prompt: prompt,
+                model_id: modelId === 'none' ? '' : modelId,
+                project_id: projectId
+            }),
+            timeout: 90000
+        })
+        .done(function(data) {
+            // Fill form fields with generated specs
+            if (data.title) $('#taskTitle').val(data.title);
+            if (data.description) $('#taskDescription').val(data.description);
+            if (data.acceptance_criteria) $('#taskCriteria').val(data.acceptance_criteria);
+
+            showToast('Specs generated successfully', 'success');
+
+            // Change button text to Re-generate
+            $('#generateSpecsBtnText').text('Re-generate');
+        })
+        .fail(function(xhr) {
+            const msg = xhr.responseJSON ? xhr.responseJSON.error : 'Failed to generate specs';
+            showToast(msg, 'error');
+            $('#generateSpecsBtnText').text('Generate Specs');
+        })
+        .always(function() {
+            $('#aiAssistSpinner').addClass('hidden');
+            $('#btnGenerateSpecs').prop('disabled', false);
+        });
+    }
+
+    function resetAiAssist() {
+        aiAssistOpen = false;
+        $('#aiAssistBody').addClass('hidden');
+        $('#aiAssistToggle').removeClass('open');
+        $('#aiAssistPrompt').val('');
+        $('#generateSpecsBtnText').text('Generate Specs');
+        $('#aiAssistSpinner').addClass('hidden');
+        $('#btnGenerateSpecs').prop('disabled', false);
+        $('#aiAssistSection').removeClass('hidden');
+    }
 });
 
 // ============================================================================

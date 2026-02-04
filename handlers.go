@@ -2388,39 +2388,106 @@ func (h *Handler) HandleGenerateDocs(w http.ResponseWriter, r *http.Request) {
 }
 
 // BuildDocsPrompt creates a prompt for comprehensive documentation generation.
+// Generates 8 structured doc files: PROJECT.md, SETUP.md, ARCHITECTURE.md, STRUCTURE.md,
+// CONVENTIONS.md, DECISIONS.md, API.md, and CHANGELOG.md.
 func BuildDocsPrompt(project *Project) string {
 	return fmt.Sprintf(`# Generate Comprehensive Project Documentation
 
 ## Project: %s
 ## Path: %s
 
-Analyze the entire codebase and create comprehensive documentation in a "docs/" folder.
+Analyze the entire codebase and create comprehensive, structured documentation in a "docs/" folder.
 
 ## Your Task:
 
 1. **Analyze the entire codebase** - Read all source files, understand the architecture, dependencies, and how components interact.
 
-2. **Create the following documentation files:**
+2. **Create exactly these 8 documentation files:**
 
-   - **docs/README.md** - Project overview, what it does, how to set it up, how to run it
-   - **docs/architecture.md** - System architecture, folder structure, key design decisions, data flow
-   - **docs/api.md** - All API endpoints (if applicable), request/response formats, examples
-   - **docs/development.md** - Development setup, coding conventions, how to contribute, testing
+### docs/PROJECT.md
+Project identity and overview. Required sections:
+- **Purpose** - What the project does, who it's for
+- **Tech Stack** - Languages, frameworks, major libraries
+- **Key Dependencies** - External services, APIs, databases
+- **Repository** - Repo URL, branch strategy, CI/CD
+
+### docs/SETUP.md
+How to get the project running. Required sections:
+- **Prerequisites** - Required tools, versions, accounts
+- **Installation** - Step-by-step setup instructions
+- **Running Locally** - How to start the dev server / run the app
+- **Building** - How to create a production build
+- **Testing** - How to run tests (unit, integration, e2e)
+- **Debugging** - Common issues, how to debug, useful commands
+
+### docs/ARCHITECTURE.md
+System design and component relationships. Required sections:
+- **System Overview** - High-level description of the system
+- **Component Diagram** - ASCII or text description of major components and their relationships
+- **Data Flow** - How data moves through the system
+- **Key Design Patterns** - Patterns used and why
+- **Database / Storage** - Schema overview, data models, storage strategy
+
+### docs/STRUCTURE.md
+File and folder map. Required format:
+- Tree-style directory layout
+- One-liner description for each file/folder
+- Group by logical area (e.g., "API routes", "Components", "Utils")
+
+### docs/CONVENTIONS.md
+Coding standards and patterns. Required sections:
+- **Naming** - Naming conventions for files, functions, variables, components
+- **Code Patterns** - Common patterns used in the codebase (with examples)
+- **Do's and Don'ts** - Explicit rules to follow and pitfalls to avoid
+- **Error Handling** - How errors are handled and propagated
+- **Testing** - Testing conventions, what to test, how to write tests
+
+### docs/DECISIONS.md
+Architectural Decision Records. Format each decision as:
+- **Title** - Short descriptive title
+- **Status** - Accepted / Superseded / Deprecated
+- **Context** - What situation led to this decision
+- **Decision** - What was decided
+- **Consequences** - What are the trade-offs, what was rejected and why
+
+Include at least the major decisions visible in the codebase.
+
+### docs/API.md
+API documentation (if applicable). Required sections:
+- **Overview** - Base URL, versioning, authentication
+- **Endpoints** - Grouped by resource, with method, path, description, request/response
+- **Authentication** - Auth mechanisms and how to use them
+- **Error Handling** - Error response format and common error codes
+
+If the project has no API, write a brief note explaining that and skip the endpoint sections.
+
+### docs/CHANGELOG.md
+Rolling change log. Create a single initial entry:
+` + "`" + `` + "`" + `` + "`" + `
+# Changelog
+
+## %s - Initial Documentation
+- Generated comprehensive project documentation
+- Files: PROJECT.md, SETUP.md, ARCHITECTURE.md, STRUCTURE.md, CONVENTIONS.md, DECISIONS.md, API.md, CHANGELOG.md
+` + "`" + `` + "`" + `` + "`" + `
+Use today's date in YYYY-MM-DD format.
 
 3. **Documentation Quality:**
    - Write clear, well-structured Markdown
    - Include code examples where helpful
-   - Use proper headings and table of contents
+   - Use proper headings consistently
    - Be thorough but concise
    - Focus on what a new developer would need to understand the project
+   - Use actual values from the codebase, not placeholders
 
 4. **Important:**
    - Create the docs/ directory if it doesn't exist
    - Do NOT modify any source code
    - Only create/modify files inside the docs/ directory
+   - Create ALL 8 files listed above
 
 When complete, output [SUCCESS].
-`, project.Name, project.Path)
+`, project.Name, project.Path, time.Now().Format("2006-01-02"))
 }
 
 // ============================================================================
@@ -2799,4 +2866,169 @@ func (h *Handler) HandleBoardColumnsReorder(w http.ResponseWriter, r *http.Reque
 
 	h.hub.BroadcastColumnsReorder(projectID)
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ============================================================================
+// AI Spec Generation
+// ============================================================================
+
+// HandleGenerateTaskSpecs handles POST /api/tasks/generate-specs
+func (h *Handler) HandleGenerateTaskSpecs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Extend write deadline for AI model invocation
+	rc := http.NewResponseController(w)
+	rc.SetWriteDeadline(time.Now().Add(90 * time.Second))
+
+	var req GenerateSpecsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	if req.Prompt == "" {
+		h.writeError(w, http.StatusBadRequest, "Prompt is required")
+		return
+	}
+
+	config, err := h.db.GetConfig()
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to get config: "+err.Error())
+		return
+	}
+
+	// Build the system prompt with project context
+	systemPrompt := buildSpecGenerationPrompt(req.Prompt, req.ProjectID, h.db)
+
+	// Determine working directory
+	workDir := config.DefaultProjectDir
+	if req.ProjectID != "" {
+		if project, err := h.db.GetProject(req.ProjectID); err == nil && project != nil {
+			workDir = project.Path
+		}
+	}
+
+	// Call AI model
+	output, err := h.runner.RunOneShot(req.ModelID, systemPrompt, workDir, config)
+	if err != nil {
+		log.Printf("AI spec generation failed: %v", err)
+		h.writeError(w, http.StatusInternalServerError, "AI model failed: "+err.Error())
+		return
+	}
+
+	// Parse output - try to extract JSON from Claude's response
+	resp := parseSpecsOutput(output)
+	h.writeJSON(w, http.StatusOK, resp)
+}
+
+// buildSpecGenerationPrompt constructs the prompt for AI spec generation.
+func buildSpecGenerationPrompt(userPrompt string, projectID string, db *Database) string {
+	var sb strings.Builder
+	sb.WriteString("You are a software architect. Generate a task specification from the user's idea.\n\n")
+
+	if projectID != "" {
+		if project, err := db.GetProject(projectID); err == nil && project != nil {
+			sb.WriteString(fmt.Sprintf("Project: %s\n", project.Name))
+			if project.Path != "" {
+				sb.WriteString(fmt.Sprintf("Project path: %s\n", project.Path))
+			}
+			if project.Description != "" {
+				sb.WriteString(fmt.Sprintf("Project description: %s\n", project.Description))
+			}
+			sb.WriteString("\n")
+
+			// Inject summary docs (PROJECT.md + ARCHITECTURE.md) for context
+			if project.Path != "" {
+				docsContent := readProjectDocs(project.Path, "summary")
+				if docsContent != "" {
+					sb.WriteString("## Existing Project Documentation\n\n")
+					sb.WriteString(docsContent)
+					sb.WriteString("\n")
+				}
+			}
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("User's idea: %s\n\n", userPrompt))
+	sb.WriteString("Respond with ONLY a JSON object (no markdown fences, no extra text):\n")
+	sb.WriteString(`{"title":"short imperative title","description":"detailed markdown description of what to implement","acceptance_criteria":"bullet-pointed list of criteria for completion"}`)
+	sb.WriteString("\n")
+
+	return sb.String()
+}
+
+// parseSpecsOutput extracts structured specs from AI model output.
+func parseSpecsOutput(output string) GenerateSpecsResponse {
+	var resp GenerateSpecsResponse
+
+	// For Claude --output-format json, the result may be wrapped in a JSON structure
+	// Try to extract the assistant's text from Claude's JSON output format
+	text := extractClaudeOutputText(output)
+
+	// Try to find and parse JSON from the text
+	jsonStr := extractJSON(text)
+	if jsonStr != "" {
+		if err := json.Unmarshal([]byte(jsonStr), &resp); err == nil && resp.Title != "" {
+			return resp
+		}
+	}
+
+	// Fallback: use raw output as description
+	resp.Title = "Generated Task"
+	resp.Description = strings.TrimSpace(text)
+	return resp
+}
+
+// extractClaudeOutputText extracts the text content from Claude's --output-format json output.
+func extractClaudeOutputText(output string) string {
+	// Claude's JSON output format wraps results in a JSON array of content blocks
+	// Try to parse as JSON array and extract text
+	var blocks []map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &blocks); err == nil {
+		for _, block := range blocks {
+			if block["type"] == "result" {
+				if result, ok := block["result"].(string); ok {
+					return result
+				}
+			}
+		}
+		// Also check for text blocks
+		for _, block := range blocks {
+			if block["type"] == "text" {
+				if text, ok := block["text"].(string); ok {
+					return text
+				}
+			}
+		}
+	}
+
+	// Try parsing as single object
+	var single map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &single); err == nil {
+		if result, ok := single["result"].(string); ok {
+			return result
+		}
+		if text, ok := single["text"].(string); ok {
+			return text
+		}
+	}
+
+	// Not a Claude JSON wrapper, return as-is
+	return output
+}
+
+// extractJSON finds the first JSON object in a string (handles markdown fences or preamble).
+func extractJSON(s string) string {
+	start := strings.Index(s, "{")
+	if start == -1 {
+		return ""
+	}
+	end := strings.LastIndex(s, "}")
+	if end == -1 || end <= start {
+		return ""
+	}
+	return s[start : end+1]
 }

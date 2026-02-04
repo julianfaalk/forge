@@ -9,12 +9,118 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
+
+// docFilesPriority defines the order in which doc files are read and injected into prompts.
+var docFilesPriority = []string{
+	"PROJECT.md", "ARCHITECTURE.md", "CONVENTIONS.md", "STRUCTURE.md",
+	"DECISIONS.md", "SETUP.md", "API.md", "CHANGELOG.md",
+}
+
+const maxDocsBytes = 50 * 1024 // 50KB cap for prompt injection
+const changelogMaxEntries = 20
+
+// readProjectDocs reads documentation files from the project's docs/ directory.
+// tier "full" reads all 8 files in priority order (capped at maxDocsBytes).
+// tier "summary" reads only PROJECT.md and ARCHITECTURE.md.
+// Returns "" if docs/ doesn't exist or contains no readable files.
+func readProjectDocs(projectPath string, tier string) string {
+	docsDir := filepath.Join(projectPath, "docs")
+	info, err := os.Stat(docsDir)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+
+	filesToRead := docFilesPriority
+	if tier == "summary" {
+		filesToRead = []string{"PROJECT.md", "ARCHITECTURE.md"}
+	}
+
+	var sb strings.Builder
+	totalBytes := 0
+
+	for _, filename := range filesToRead {
+		if totalBytes >= maxDocsBytes {
+			break
+		}
+
+		filePath := filepath.Join(docsDir, filename)
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue // silently skip missing files
+		}
+
+		content := string(data)
+
+		// Truncate CHANGELOG.md to last N entries
+		if filename == "CHANGELOG.md" {
+			content = truncateChangelog(content, changelogMaxEntries)
+		}
+
+		// Check if adding this file would exceed the cap
+		entryHeader := fmt.Sprintf("## docs/%s\n\n", filename)
+		entryLen := len(entryHeader) + len(content) + 1 // +1 for trailing newline
+		if totalBytes+entryLen > maxDocsBytes {
+			// Add as much as we can
+			remaining := maxDocsBytes - totalBytes - len(entryHeader) - 1
+			if remaining > 0 {
+				sb.WriteString(entryHeader)
+				sb.WriteString(content[:remaining])
+				sb.WriteString("\n")
+			}
+			break
+		}
+
+		sb.WriteString(entryHeader)
+		sb.WriteString(content)
+		sb.WriteString("\n")
+		totalBytes += entryLen
+	}
+
+	return sb.String()
+}
+
+// truncateChangelog keeps only the last maxEntries entries in a CHANGELOG content string.
+// Entries are identified by ## or ### headings. The file-level # heading is preserved.
+func truncateChangelog(content string, maxEntries int) string {
+	lines := strings.Split(content, "\n")
+
+	// Separate the file-level heading from entries
+	var headerLines []string
+	var entryStartIndices []int
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+			entryStartIndices = append(entryStartIndices, i)
+		} else if len(entryStartIndices) == 0 {
+			headerLines = append(headerLines, line)
+		}
+	}
+
+	totalEntries := len(entryStartIndices)
+	if totalEntries <= maxEntries {
+		return content // no truncation needed
+	}
+
+	// Keep last maxEntries entries
+	startFrom := entryStartIndices[totalEntries-maxEntries]
+	var sb strings.Builder
+	for _, line := range headerLines {
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString(fmt.Sprintf("*(showing last %d of %d entries)*\n\n", maxEntries, totalEntries))
+	sb.WriteString(strings.Join(lines[startFrom:], "\n"))
+
+	return sb.String()
+}
 
 // RalphProcess represents a running RALPH/Claude process
 type RalphProcess struct {
@@ -91,14 +197,20 @@ func BuildPrompt(task *Task, protectedBranches []string, attachments []Attachmen
 		sb.WriteString("\nIf you need to make changes to a protected branch, create a feature branch first.\n\n")
 	}
 
-	// Check if docs/ folder exists in the project directory
+	// Inject project documentation if available
+	docsContent := ""
+	docsExist := false
 	if task.ProjectDir != "" {
-		docsPath := task.ProjectDir + "/docs"
-		if info, err := os.Stat(docsPath); err == nil && info.IsDir() {
-			sb.WriteString("## Documentation\n\n")
-			sb.WriteString("This project has a `docs/` folder with existing documentation.\n")
-			sb.WriteString("If your changes affect documented behavior, update the relevant documentation in `docs/`.\n\n")
+		docsContent = readProjectDocs(task.ProjectDir, "full")
+		if docsContent != "" {
+			docsExist = true
 		}
+	}
+	if docsContent != "" {
+		sb.WriteString("## Project Documentation\n\n")
+		sb.WriteString("The following is the current project documentation. Use this to understand the project context:\n\n")
+		sb.WriteString(docsContent)
+		sb.WriteString("\n")
 	}
 
 	sb.WriteString("## Instructions\n\n")
@@ -107,7 +219,14 @@ func BuildPrompt(task *Task, protectedBranches []string, attachments []Attachmen
 	sb.WriteString("3. Test after each significant change\n")
 	sb.WriteString("4. If tests fail: analyze the error and fix it\n")
 	sb.WriteString("5. Iterate until ALL acceptance criteria are met\n")
-	sb.WriteString("6. Output structured status after each iteration\n\n")
+	if docsExist {
+		sb.WriteString("6. After completing your work, update docs/CHANGELOG.md by appending an entry with today's date\n")
+		sb.WriteString("   describing what you changed and why. If your changes affect architecture, file structure,\n")
+		sb.WriteString("   conventions, or decisions, update the relevant doc files in docs/ too.\n")
+		sb.WriteString("7. Output structured status after each iteration\n\n")
+	} else {
+		sb.WriteString("6. Output structured status after each iteration\n\n")
+	}
 
 	sb.WriteString("## Output Markers\n\n")
 	sb.WriteString("Use these markers in your output:\n")
@@ -473,6 +592,19 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		sb.WriteString("\n")
 	}
 
+	// Inject project documentation if available
+	docsExist := false
+	if task.ProjectDir != "" {
+		docsContent := readProjectDocs(task.ProjectDir, "full")
+		if docsContent != "" {
+			docsExist = true
+			sb.WriteString("## Project Documentation\n\n")
+			sb.WriteString("The following is the current project documentation. Use this to understand the project context:\n\n")
+			sb.WriteString(docsContent)
+			sb.WriteString("\n")
+		}
+	}
+
 	// Only include user feedback section if there's actual feedback
 	if feedback != "" {
 		sb.WriteString("## User Feedback\n\n")
@@ -485,6 +617,11 @@ func (r *RalphRunner) startContinuation(task *Task, config *Config, feedback str
 		sb.WriteString("Continue working on this task based on the user's feedback above.\n")
 	} else {
 		sb.WriteString("Continue working on this task.\n")
+	}
+	if docsExist {
+		sb.WriteString("After completing your work, update docs/CHANGELOG.md by appending an entry with today's date\n")
+		sb.WriteString("describing what you changed and why. If your changes affect architecture, file structure,\n")
+		sb.WriteString("conventions, or decisions, update the relevant doc files in docs/ too.\n")
 	}
 	sb.WriteString("Use the same output markers as before:\n")
 	sb.WriteString("- `[ITERATION X]` at the start of each iteration\n")
@@ -842,6 +979,56 @@ func (r *RalphRunner) IsRunning(taskID string) bool {
 	defer r.mu.RUnlock()
 	_, exists := r.processes[taskID]
 	return exists
+}
+
+// RunOneShot executes a synchronous, one-shot AI model invocation and returns the output.
+// Used for quick tasks like spec generation where we don't need streaming or process management.
+func (r *RalphRunner) RunOneShot(modelID string, prompt string, workDir string, config *Config) (string, error) {
+	// Create a temporary task to pass to resolveModel
+	tempTask := &Task{ModelID: modelID}
+	model := r.resolveModel(tempTask, config)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	var cmd *exec.Cmd
+	switch model.ModelType {
+	case "claude-code":
+		cmd = exec.CommandContext(ctx, model.Command, "-p", prompt, "--output-format", "json")
+	case "codex":
+		cmd = exec.CommandContext(ctx, model.Command, "-p", prompt, "--quiet")
+	case "custom":
+		args := []string{}
+		if model.ConfigJSON != "" && model.ConfigJSON != "{}" {
+			var configMap map[string]interface{}
+			if err := json.Unmarshal([]byte(model.ConfigJSON), &configMap); err == nil {
+				if argsVal, ok := configMap["args"]; ok {
+					if argsArr, ok := argsVal.([]interface{}); ok {
+						for _, arg := range argsArr {
+							if s, ok := arg.(string); ok {
+								args = append(args, s)
+							}
+						}
+					}
+				}
+			}
+		}
+		cmd = exec.CommandContext(ctx, model.Command, args...)
+		cmd.Stdin = strings.NewReader(prompt)
+	default:
+		cmd = exec.CommandContext(ctx, model.Command, "-p", prompt, "--output-format", "json")
+	}
+
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return string(output), fmt.Errorf("model execution failed: %w (output: %s)", err, string(output))
+	}
+
+	return string(output), nil
 }
 
 // TryStartNextQueued checks if there's a queued task and starts it if no process is running.
