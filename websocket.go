@@ -147,6 +147,34 @@ func (h *Hub) BroadcastDeploymentSuccess(taskID string, message string) {
 	h.broadcastJSON(msg)
 }
 
+// BroadcastColumnUpdate sends a board column update notification
+func (h *Hub) BroadcastColumnUpdate(column *BoardColumn) {
+	msg := WSMessage{
+		Type:   "column_updated",
+		Column: column,
+	}
+	h.broadcastJSON(msg)
+}
+
+// BroadcastColumnDelete sends a board column deletion notification
+func (h *Hub) BroadcastColumnDelete(columnID string, projectID string) {
+	msg := WSMessage{
+		Type:    "column_deleted",
+		Message: columnID,
+		Column:  &BoardColumn{ID: columnID, ProjectID: projectID},
+	}
+	h.broadcastJSON(msg)
+}
+
+// BroadcastColumnsReorder sends a columns reorder notification for a project
+func (h *Hub) BroadcastColumnsReorder(projectID string) {
+	msg := WSMessage{
+		Type:    "columns_reordered",
+		Message: projectID,
+	}
+	h.broadcastJSON(msg)
+}
+
 // BroadcastMergeConflict sends a merge conflict notification
 func (h *Hub) BroadcastMergeConflict(conflict *MergeConflict) {
 	msg := WSMessage{

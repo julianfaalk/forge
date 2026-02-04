@@ -2408,3 +2408,127 @@ func (h *Handler) HandleProjectSetWorkingBranch(w http.ResponseWriter, r *http.R
 
 	h.writeJSON(w, http.StatusOK, updatedProject)
 }
+
+// ============================================================================
+// Board Column Handlers
+// ============================================================================
+
+// HandleBoardColumns handles GET /api/projects/{id}/columns and POST /api/projects/{id}/columns
+func (h *Handler) HandleBoardColumns(w http.ResponseWriter, r *http.Request) {
+	projectID := extractProjectID(r.URL.Path)
+	if projectID == "" {
+		h.writeError(w, http.StatusBadRequest, "Project ID required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		columns, err := h.db.GetBoardColumns(projectID)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to get columns: "+err.Error())
+			return
+		}
+		if columns == nil {
+			columns = []BoardColumn{}
+		}
+		h.writeJSON(w, http.StatusOK, columns)
+
+	case http.MethodPost:
+		var req CreateBoardColumnRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+			return
+		}
+		if req.Name == "" {
+			h.writeError(w, http.StatusBadRequest, "Column name is required")
+			return
+		}
+
+		col, err := h.db.CreateBoardColumn(projectID, req)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to create column: "+err.Error())
+			return
+		}
+
+		h.hub.BroadcastColumnUpdate(col)
+		h.writeJSON(w, http.StatusCreated, col)
+
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// HandleBoardColumn handles PUT /api/projects/{id}/columns/{colId} and DELETE
+func (h *Handler) HandleBoardColumn(w http.ResponseWriter, r *http.Request) {
+	// Extract column ID from path: /api/projects/{pid}/columns/{colId}
+	path := r.URL.Path
+	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	if len(parts) < 2 {
+		h.writeError(w, http.StatusBadRequest, "Column ID required")
+		return
+	}
+	colID := parts[len(parts)-1]
+	projectID := extractProjectID(path)
+
+	switch r.Method {
+	case http.MethodPut:
+		var req UpdateBoardColumnRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+			return
+		}
+
+		col, err := h.db.UpdateBoardColumn(colID, req)
+		if err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to update column: "+err.Error())
+			return
+		}
+		if col == nil {
+			h.writeError(w, http.StatusNotFound, "Column not found")
+			return
+		}
+
+		h.hub.BroadcastColumnUpdate(col)
+		h.writeJSON(w, http.StatusOK, col)
+
+	case http.MethodDelete:
+		if err := h.db.DeleteBoardColumn(colID); err != nil {
+			h.writeError(w, http.StatusInternalServerError, "Failed to delete column: "+err.Error())
+			return
+		}
+
+		h.hub.BroadcastColumnDelete(colID, projectID)
+		h.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// HandleBoardColumnsReorder handles POST /api/projects/{id}/columns/reorder
+func (h *Handler) HandleBoardColumnsReorder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	projectID := extractProjectID(r.URL.Path)
+	if projectID == "" {
+		h.writeError(w, http.StatusBadRequest, "Project ID required")
+		return
+	}
+
+	var req ReorderBoardColumnsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	if err := h.db.ReorderBoardColumns(projectID, req.ColumnIDs); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to reorder columns: "+err.Error())
+		return
+	}
+
+	h.hub.BroadcastColumnsReorder(projectID)
+	h.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}

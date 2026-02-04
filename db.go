@@ -5,6 +5,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -389,6 +390,95 @@ func (d *Database) runMigrations() error {
 		log.Println("Migration 10 completed")
 	}
 
+	// ========== Migration 11: Board Columns Table ==========
+	if version < 11 {
+		log.Println("Running migration 11: Creating board_columns table")
+		migration11 := `
+		CREATE TABLE IF NOT EXISTS board_columns (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			color TEXT DEFAULT '',
+			emoji TEXT DEFAULT '',
+			sort_order INTEGER DEFAULT 0,
+			column_type TEXT DEFAULT 'regular',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_board_columns_project ON board_columns(project_id, sort_order);
+
+		INSERT INTO schema_version (version) VALUES (11);
+		`
+		if _, err := d.db.Exec(migration11); err != nil {
+			return err
+		}
+		log.Println("Migration 11 completed")
+	}
+
+	// ========== Migration 12: New Task Fields for Board Columns ==========
+	if version < 12 {
+		log.Println("Running migration 12: Adding column_id, created_by, assigned_to to tasks")
+
+		newColumns := []struct {
+			name string
+			def  string
+		}{
+			{"column_id", "TEXT DEFAULT ''"},
+			{"created_by", "TEXT DEFAULT ''"},
+			{"assigned_to", "TEXT DEFAULT ''"},
+		}
+
+		for _, col := range newColumns {
+			query := "ALTER TABLE tasks ADD COLUMN " + col.name + " " + col.def
+			if _, err := d.db.Exec(query); err != nil {
+				log.Printf("Note: Column tasks.%s may already exist: %v", col.name, err)
+			}
+		}
+
+		_, err := d.db.Exec("INSERT INTO schema_version (version) VALUES (12)")
+		if err != nil {
+			return err
+		}
+		log.Println("Migration 12 completed")
+	}
+
+	// ========== Migration 13: Default Board Columns for Existing Projects ==========
+	if version < 13 {
+		log.Println("Running migration 13: Creating default board columns for existing projects")
+
+		// Find all projects that don't have any board columns yet
+		rows, err := d.db.Query(`
+			SELECT p.id FROM projects p
+			WHERE NOT EXISTS (SELECT 1 FROM board_columns bc WHERE bc.project_id = p.id)
+		`)
+		if err != nil {
+			return err
+		}
+
+		var projectIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			projectIDs = append(projectIDs, id)
+		}
+		rows.Close()
+
+		for _, pid := range projectIDs {
+			if err := d.createDefaultBoardColumnsInternal(pid); err != nil {
+				log.Printf("Warning: Failed to create default columns for project %s: %v", pid, err)
+			}
+		}
+
+		_, err = d.db.Exec("INSERT INTO schema_version (version) VALUES (13)")
+		if err != nil {
+			return err
+		}
+		log.Printf("Migration 13 completed: Created default columns for %d projects", len(projectIDs))
+	}
+
 	return nil
 }
 
@@ -413,6 +503,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 		       t.started_at, t.finished_at,
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       COALESCE(t.continue_message, ''),
+		       COALESCE(t.column_id, ''), COALESCE(t.created_by, ''), COALESCE(t.assigned_to, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -440,6 +531,7 @@ func (d *Database) GetAllTasks() ([]Task, error) {
 			&startedAt, &finishedAt,
 			&t.RollbackTag, &t.CommitHash,
 			&t.ContinueMessage,
+			&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -487,6 +579,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		       t.started_at, t.finished_at,
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       COALESCE(t.continue_message, ''),
+		       COALESCE(t.column_id, ''), COALESCE(t.created_by, ''), COALESCE(t.assigned_to, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -502,6 +595,7 @@ func (d *Database) GetTask(id string) (*Task, error) {
 		&startedAt, &finishedAt,
 		&t.RollbackTag, &t.CommitHash,
 		&t.ContinueMessage,
+		&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
 		&ttID, &ttName, &ttColor, &ttIsSystem,
 	)
 	if err == sql.ErrNoRows {
@@ -543,6 +637,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 		       t.started_at, t.finished_at,
 		       COALESCE(t.rollback_tag, ''), COALESCE(t.commit_hash, ''),
 		       COALESCE(t.continue_message, ''),
+		       COALESCE(t.column_id, ''), COALESCE(t.created_by, ''), COALESCE(t.assigned_to, ''),
 		       tt.id, tt.name, tt.color, tt.is_system
 		FROM tasks t
 		LEFT JOIN task_types tt ON t.task_type_id = tt.id
@@ -571,6 +666,7 @@ func (d *Database) GetTasksByProject(projectID string) ([]Task, error) {
 			&startedAt, &finishedAt,
 			&t.RollbackTag, &t.CommitHash,
 			&t.ContinueMessage,
+			&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
 			&ttID, &ttName, &ttColor, &ttIsSystem,
 		)
 		if err != nil {
@@ -615,6 +711,9 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		ProjectID:          req.ProjectID,
 		TaskTypeID:         req.TaskTypeID,
 		TargetBranch:       req.TargetBranch,
+		ColumnID:           req.ColumnID,
+		CreatedBy:          req.CreatedBy,
+		AssignedTo:         req.AssignedTo,
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}
@@ -634,13 +733,14 @@ func (d *Database) CreateTask(req CreateTaskRequest, config *Config) (*Task, err
 		INSERT INTO tasks (id, title, description, acceptance_criteria, status,
 		                   priority, current_iteration, max_iterations, logs,
 		                   error, project_dir, project_id, task_type_id, working_branch,
-		                   target_branch, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   target_branch, column_id, created_by, assigned_to, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		task.ID, task.Title, task.Description, task.AcceptanceCriteria,
 		task.Status, task.Priority, task.CurrentIteration, task.MaxIterations,
 		task.Logs, task.Error, task.ProjectDir, task.ProjectID, task.TaskTypeID,
-		task.WorkingBranch, task.TargetBranch, task.CreatedAt, task.UpdatedAt,
+		task.WorkingBranch, task.TargetBranch, task.ColumnID, task.CreatedBy, task.AssignedTo,
+		task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -663,7 +763,8 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		       created_at, updated_at,
 		       COALESCE(project_id, ''), COALESCE(task_type_id, ''), COALESCE(working_branch, ''),
 		       COALESCE(target_branch, ''),
-		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0)
+		       COALESCE(conflict_pr_url, ''), COALESCE(conflict_pr_number, 0),
+		       COALESCE(column_id, ''), COALESCE(created_by, ''), COALESCE(assigned_to, '')
 		FROM tasks WHERE id = ?
 	`, id).Scan(
 		&t.ID, &t.Title, &t.Description, &t.AcceptanceCriteria,
@@ -672,6 +773,7 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 		&t.ProjectID, &t.TaskTypeID, &t.WorkingBranch,
 		&t.TargetBranch,
 		&t.ConflictPRURL, &t.ConflictPRNumber,
+		&t.ColumnID, &t.CreatedBy, &t.AssignedTo,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -714,18 +816,29 @@ func (d *Database) UpdateTask(id string, req UpdateTaskRequest) (*Task, error) {
 	if req.TargetBranch != nil {
 		t.TargetBranch = *req.TargetBranch
 	}
+	if req.ColumnID != nil {
+		t.ColumnID = *req.ColumnID
+	}
+	if req.CreatedBy != nil {
+		t.CreatedBy = *req.CreatedBy
+	}
+	if req.AssignedTo != nil {
+		t.AssignedTo = *req.AssignedTo
+	}
 	t.UpdatedAt = time.Now()
 
 	_, err = d.db.Exec(`
 		UPDATE tasks SET
 			title = ?, description = ?, acceptance_criteria = ?, status = ?,
 			priority = ?, max_iterations = ?, project_dir = ?,
-			project_id = ?, task_type_id = ?, working_branch = ?, target_branch = ?, updated_at = ?
+			project_id = ?, task_type_id = ?, working_branch = ?, target_branch = ?,
+			column_id = ?, created_by = ?, assigned_to = ?, updated_at = ?
 		WHERE id = ?
 	`,
 		t.Title, t.Description, t.AcceptanceCriteria, t.Status,
 		t.Priority, t.MaxIterations, t.ProjectDir,
-		t.ProjectID, t.TaskTypeID, t.WorkingBranch, t.TargetBranch, t.UpdatedAt, t.ID,
+		t.ProjectID, t.TaskTypeID, t.WorkingBranch, t.TargetBranch,
+		t.ColumnID, t.CreatedBy, t.AssignedTo, t.UpdatedAt, t.ID,
 	)
 	if err != nil {
 		return nil, err
@@ -1268,6 +1381,11 @@ func (d *Database) CreateProject(req CreateProjectRequest, isAutoDetected bool) 
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// Create default board columns for the new project
+	if err := d.createDefaultBoardColumnsInternal(project.ID); err != nil {
+		log.Printf("Warning: Failed to create default board columns for project %s: %v", project.ID, err)
 	}
 
 	// Git-Informationen zur Laufzeit ermitteln
@@ -1832,4 +1950,212 @@ func (d *Database) ClearTaskRollbackTag(id string) error {
 		UPDATE tasks SET rollback_tag = '', updated_at = ? WHERE id = ?
 	`, time.Now(), id)
 	return err
+}
+
+// ============================================================================
+// Board Column CRUD Operations
+// ============================================================================
+
+// createDefaultBoardColumnsInternal creates default columns for a project (no mutex - caller must hold lock or be in migration).
+func (d *Database) createDefaultBoardColumnsInternal(projectID string) error {
+	defaults := []struct {
+		name       string
+		colType    string
+		sortOrder  int
+		emoji      string
+	}{
+		{"Triage", "triage", 0, "📥"},
+		{"Backlog", "regular", 1, ""},
+		{"In Progress", "regular", 2, ""},
+		{"Review", "regular", 3, ""},
+		{"Done", "done", 98, "✅"},
+		{"Not Now", "not_now", 99, "💤"},
+	}
+
+	for _, col := range defaults {
+		id := uuid.New().String()
+		_, err := d.db.Exec(`
+			INSERT INTO board_columns (id, project_id, name, color, emoji, sort_order, column_type, created_at)
+			VALUES (?, ?, ?, '', ?, ?, ?, CURRENT_TIMESTAMP)
+		`, id, projectID, col.name, col.emoji, col.sortOrder, col.colType)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CreateDefaultBoardColumns creates the default set of columns for a project.
+func (d *Database) CreateDefaultBoardColumns(projectID string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.createDefaultBoardColumnsInternal(projectID)
+}
+
+// GetBoardColumns returns all columns for a project, sorted by sort_order.
+func (d *Database) GetBoardColumns(projectID string) ([]BoardColumn, error) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	rows, err := d.db.Query(`
+		SELECT id, project_id, name, color, emoji, sort_order, column_type, created_at
+		FROM board_columns
+		WHERE project_id = ?
+		ORDER BY sort_order ASC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var columns []BoardColumn
+	for rows.Next() {
+		var c BoardColumn
+		err := rows.Scan(&c.ID, &c.ProjectID, &c.Name, &c.Color, &c.Emoji, &c.SortOrder, &c.ColumnType, &c.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, c)
+	}
+	return columns, rows.Err()
+}
+
+// CreateBoardColumn creates a new board column for a project.
+func (d *Database) CreateBoardColumn(projectID string, req CreateBoardColumnRequest) (*BoardColumn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Get next sort order
+	var maxSort sql.NullInt64
+	d.db.QueryRow(`SELECT MAX(sort_order) FROM board_columns WHERE project_id = ? AND column_type = 'regular'`, projectID).Scan(&maxSort)
+	nextSort := 1
+	if maxSort.Valid {
+		nextSort = int(maxSort.Int64) + 1
+	}
+
+	colType := req.ColumnType
+	if colType == "" {
+		colType = "regular"
+	}
+
+	col := &BoardColumn{
+		ID:         uuid.New().String(),
+		ProjectID:  projectID,
+		Name:       req.Name,
+		Color:      req.Color,
+		Emoji:      req.Emoji,
+		SortOrder:  nextSort,
+		ColumnType: colType,
+		CreatedAt:  time.Now(),
+	}
+
+	_, err := d.db.Exec(`
+		INSERT INTO board_columns (id, project_id, name, color, emoji, sort_order, column_type, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, col.ID, col.ProjectID, col.Name, col.Color, col.Emoji, col.SortOrder, col.ColumnType, col.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return col, nil
+}
+
+// UpdateBoardColumn updates a board column's properties.
+func (d *Database) UpdateBoardColumn(id string, req UpdateBoardColumnRequest) (*BoardColumn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var c BoardColumn
+	err := d.db.QueryRow(`
+		SELECT id, project_id, name, color, emoji, sort_order, column_type, created_at
+		FROM board_columns WHERE id = ?
+	`, id).Scan(&c.ID, &c.ProjectID, &c.Name, &c.Color, &c.Emoji, &c.SortOrder, &c.ColumnType, &c.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Name != nil {
+		c.Name = *req.Name
+	}
+	if req.Color != nil {
+		c.Color = *req.Color
+	}
+	if req.Emoji != nil {
+		c.Emoji = *req.Emoji
+	}
+
+	_, err = d.db.Exec(`
+		UPDATE board_columns SET name = ?, color = ?, emoji = ? WHERE id = ?
+	`, c.Name, c.Color, c.Emoji, c.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &c, nil
+}
+
+// DeleteBoardColumn deletes a column and moves its tasks to the first regular column (Backlog).
+func (d *Database) DeleteBoardColumn(id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Get column info first
+	var projectID, colType string
+	err := d.db.QueryRow(`SELECT project_id, column_type FROM board_columns WHERE id = ?`, id).Scan(&projectID, &colType)
+	if err != nil {
+		return err
+	}
+
+	// Don't allow deleting triage, done, or not_now columns
+	if colType == "triage" || colType == "done" || colType == "not_now" {
+		return fmt.Errorf("cannot delete %s column", colType)
+	}
+
+	// Find the first regular column to move tasks to
+	var fallbackID string
+	err = d.db.QueryRow(`
+		SELECT id FROM board_columns
+		WHERE project_id = ? AND column_type = 'regular' AND id != ?
+		ORDER BY sort_order ASC LIMIT 1
+	`, projectID, id).Scan(&fallbackID)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	// Move tasks from deleted column to fallback
+	if fallbackID != "" {
+		_, err = d.db.Exec(`UPDATE tasks SET column_id = ? WHERE column_id = ?`, fallbackID, id)
+		if err != nil {
+			return err
+		}
+	} else {
+		// No fallback column - clear column_id
+		_, err = d.db.Exec(`UPDATE tasks SET column_id = '' WHERE column_id = ?`, id)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = d.db.Exec(`DELETE FROM board_columns WHERE id = ?`, id)
+	return err
+}
+
+// ReorderBoardColumns sets the sort order of columns based on the provided ID order.
+func (d *Database) ReorderBoardColumns(projectID string, columnIDs []string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	for i, colID := range columnIDs {
+		_, err := d.db.Exec(`
+			UPDATE board_columns SET sort_order = ? WHERE id = ? AND project_id = ?
+		`, i, colID, projectID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

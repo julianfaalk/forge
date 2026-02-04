@@ -972,6 +972,7 @@ body {
 }
 
 /* Board */
+/* Legacy .board styles kept for fallback */
 .board {
     display: flex;
     gap: 1rem;
@@ -980,7 +981,495 @@ body {
     overflow-x: auto;
 }
 
-/* Columns */
+/* ============================================================================
+   CARD TABLE LAYOUT (Basecamp-style)
+   ============================================================================ */
+
+.card-table {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Toolbar */
+.card-table-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+}
+
+.btn-add-card {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.8rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: background-color 0.15s ease;
+}
+
+.btn-add-card:hover {
+    background: var(--accent-hover);
+}
+
+/* Triage Section */
+.triage-section {
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+}
+
+.triage-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.triage-emoji {
+    font-size: 1.1rem;
+}
+
+.triage-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.triage-count {
+    font-size: 0.75rem;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    padding: 0.1rem 0.5rem;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.triage-toggle {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.2rem;
+    margin-left: auto;
+    transition: transform 0.2s ease;
+}
+
+.triage-toggle.collapsed {
+    transform: rotate(-90deg);
+}
+
+.triage-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    min-height: 20px;
+}
+
+.triage-cards.collapsed {
+    max-height: 0;
+    opacity: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.triage-cards .task-card {
+    width: 220px;
+    flex-shrink: 0;
+}
+
+.triage-cards.drag-over {
+    background-color: var(--highlight-bg);
+    border-radius: 6px;
+}
+
+/* Main Columns Area */
+.columns-area {
+    display: flex;
+    gap: 0;
+    flex: 1;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+/* Board Column */
+.board-column {
+    flex: 1;
+    min-width: 220px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border-color);
+    background-color: var(--bg-primary);
+}
+
+.board-column:last-child {
+    border-right: none;
+}
+
+.board-column-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.75rem 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--bg-secondary);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.col-emoji {
+    font-size: 1rem;
+}
+
+.board-column-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.board-column-count {
+    font-size: 0.7rem;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    padding: 0.1rem 0.4rem;
+    border-radius: 8px;
+    font-weight: 500;
+    min-width: 18px;
+    text-align: center;
+}
+
+.board-column-actions {
+    display: flex;
+}
+
+.col-menu-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0.15rem;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.board-column-header:hover .col-menu-btn {
+    opacity: 1;
+}
+
+.col-menu-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.board-column-cards {
+    flex: 1;
+    padding: 0.5rem;
+    overflow-y: auto;
+    min-height: 100px;
+}
+
+.board-column-cards.drag-over {
+    background-color: var(--highlight-bg);
+}
+
+.btn-add-inline {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.btn-add-inline:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Add Column Placeholder */
+.add-column-placeholder {
+    min-width: 180px;
+    max-width: 180px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 0.75rem;
+    background: transparent;
+    border-right: none;
+}
+
+.btn-add-column {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    background: none;
+    color: var(--text-secondary);
+    border: 1px dashed var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.btn-add-column:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--highlight-bg);
+}
+
+/* Sidebar Tabs (Done / Not Now) */
+.sidebar-tabs {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.5rem;
+    background-color: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    z-index: 2;
+}
+
+.sidebar-tab {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    padding: 0.75rem 0.4rem;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: all 0.15s ease;
+    position: relative;
+}
+
+.sidebar-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.sidebar-tab.active {
+    color: var(--accent);
+    background: var(--highlight-bg);
+}
+
+.sidebar-tab.drag-over {
+    background: var(--highlight-bg);
+    color: var(--accent);
+}
+
+.sidebar-tab-label {
+    white-space: nowrap;
+}
+
+.sidebar-tab-count {
+    writing-mode: horizontal-tb;
+    font-size: 0.65rem;
+    background: var(--bg-tertiary);
+    padding: 0.1rem 0.3rem;
+    border-radius: 6px;
+    min-width: 16px;
+    text-align: center;
+}
+
+/* Sidebar Panel (slide-out for Done/Not Now) */
+.sidebar-panel {
+    position: absolute;
+    right: 40px;
+    top: 0;
+    bottom: 0;
+    width: 320px;
+    background-color: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+    animation: slideIn 0.2s ease;
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
+.sidebar-panel.hidden {
+    display: none;
+}
+
+.sidebar-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sidebar-panel-header h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    flex: 1;
+}
+
+.sidebar-panel-count {
+    font-size: 0.75rem;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    padding: 0.1rem 0.5rem;
+    border-radius: 10px;
+}
+
+.sidebar-panel-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.3rem;
+    cursor: pointer;
+    padding: 0.2rem;
+}
+
+.sidebar-panel-close:hover {
+    color: var(--text-primary);
+}
+
+.sidebar-panel-cards {
+    flex: 1;
+    padding: 0.5rem;
+    overflow-y: auto;
+}
+
+.sidebar-panel-cards.drag-over {
+    background-color: var(--highlight-bg);
+}
+
+/* Column Context Menu */
+.col-context-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    z-index: 100;
+    min-width: 160px;
+    padding: 0.25rem 0;
+}
+
+.col-menu-item {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    text-align: left;
+    transition: background-color 0.1s ease;
+}
+
+.col-menu-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.col-menu-danger {
+    color: var(--danger);
+}
+
+.col-menu-danger:hover {
+    background: rgba(248, 81, 73, 0.1);
+}
+
+.col-menu-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 0.25rem 0;
+}
+
+/* Task Card Enhancements */
+.task-card-meta {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+    padding-left: calc(4px + 0.5rem); /* align with title (priority indicator + gap) */
+}
+
+.task-project-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-top: 0.25rem;
+    margin-left: calc(4px + 0.5rem);
+    border: 1px solid var(--border-color);
+}
+
+.assigned-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    font-size: 0.55rem;
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-left: auto;
+}
+
+.assigned-human {
+    background: var(--accent);
+    color: #fff;
+}
+
+.assigned-llm {
+    background: var(--bg-tertiary);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+
+/* Legacy column styles (kept for compatibility) */
 .column {
     flex: 1;
     min-width: 280px;
@@ -2601,13 +3090,7 @@ label {
     opacity: 1;
 }
 
-/* Legacy task-card-meta - kept for compatibility */
-.task-card-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    margin-top: 0.375rem;
-}
+/* Legacy task-card-meta flex layout removed - using card-table version */
 
 /* Legacy task-branch-badge - kept for compatibility */
 .task-branch-badge {
@@ -3956,6 +4439,27 @@ label {
         min-width: calc(33.333% - 0.5rem);
         max-width: none;
     }
+
+    /* Card Table - tablet adjustments */
+    .card-table-toolbar {
+        padding: 0.5rem 1rem;
+    }
+
+    .triage-section {
+        padding: 0.5rem 1rem;
+    }
+
+    .triage-cards .task-card {
+        width: 190px;
+    }
+
+    .board-column {
+        min-width: 200px;
+    }
+
+    .sidebar-panel {
+        width: 280px;
+    }
 }
 
 /* ============================================================================
@@ -4085,6 +4589,81 @@ label {
     .tasks-container {
         padding: 0.5rem;
         min-height: 150px;
+    }
+
+    /* Card Table - mobile: stacked layout */
+    .card-table {
+        overflow: visible;
+    }
+
+    .card-table-toolbar {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .btn-add-card {
+        font-size: 0.8rem;
+        padding: 0.35rem 0.6rem;
+    }
+
+    /* Triage - full width, smaller cards */
+    .triage-section {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .triage-cards .task-card {
+        width: 170px;
+    }
+
+    /* Columns area - single column at a time via mobile tabs */
+    .columns-area {
+        flex-direction: column;
+        overflow-x: visible;
+    }
+
+    .board-column {
+        display: none;
+        min-width: 100% !important;
+        max-width: 100% !important;
+        border-right: none;
+        min-height: calc(100vh - var(--header-height) - var(--mobile-tab-height) - 120px);
+    }
+
+    .board-column.mobile-active {
+        display: flex;
+    }
+
+    .board-column-header {
+        padding: 0.5rem 0.75rem;
+    }
+
+    .board-column-cards {
+        padding: 0.5rem;
+        min-height: 150px;
+    }
+
+    /* Hide sidebar tabs on mobile - use mobile tabs instead */
+    .sidebar-tabs {
+        display: none;
+    }
+
+    /* Sidebar panel - full width on mobile */
+    .sidebar-panel {
+        position: fixed;
+        right: 0;
+        top: var(--header-height, 60px);
+        bottom: 0;
+        width: 100%;
+        z-index: 150;
+    }
+
+    /* Hide add column placeholder on mobile */
+    .add-column-placeholder {
+        display: none;
+    }
+
+    /* Column menu button always visible on touch */
+    .col-menu-btn {
+        opacity: 1;
     }
 
     /* Task cards - compact */
@@ -4311,6 +4890,19 @@ label {
         font-size: 0.65rem;
     }
 
+    /* Triage - even smaller cards */
+    .triage-cards .task-card {
+        width: 150px;
+    }
+
+    .triage-title {
+        font-size: 0.75rem;
+    }
+
+    .board-column-name {
+        font-size: 0.75rem;
+    }
+
     /* Task cards - most compact */
     .task-card {
         padding: 0.5rem;
@@ -4389,6 +4981,18 @@ label {
     .mobile-tab {
         min-height: 44px;
         padding: 0.5rem 1rem;
+    }
+
+    /* Column menu always visible on touch */
+    .col-menu-btn {
+        opacity: 1;
+        min-height: 36px;
+        min-width: 36px;
+    }
+
+    /* Sidebar tab touch targets */
+    .sidebar-tab {
+        min-width: 44px;
     }
 
     /* Larger dropdown items */
@@ -4701,6 +5305,11 @@ label {
 
     /* Board uses full width - sidebar is overlay */
     .board {
+        margin-left: 0;
+    }
+
+    /* Card table full width */
+    .card-table {
         margin-left: 0;
     }
 }

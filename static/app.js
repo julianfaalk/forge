@@ -3,6 +3,7 @@ $(document).ready(function() {
     let tasks = [];
     let projects = [];
     let taskTypes = [];
+    let boardColumns = []; // Board columns for selected project
     let config = {};
     let ws = null;
     let currentTaskId = null;
@@ -24,6 +25,8 @@ $(document).ready(function() {
     let activeMobileTab = 'backlog'; // Active tab for mobile view
     let currentAttachments = []; // Attachments for current task
     let lightboxIndex = 0; // Current lightbox image index
+    let triageCollapsed = false; // Triage section collapsed state
+    let openSidebarPanel = null; // Currently open sidebar panel ('done' or 'not_now')
 
     // Initialize
     init();
@@ -528,8 +531,8 @@ $(document).ready(function() {
         // Update header display
         updateSelectedProjectDisplay(projectId);
 
-        // Filter tasks
-        renderAllTasks();
+        // Load board columns for selected project
+        loadBoardColumns(projectId);
 
         // Close sidebar if requested
         if (closeSidebarAfter !== false) {
@@ -557,6 +560,9 @@ $(document).ready(function() {
         // Update header display
         updateSelectedProjectDisplay(selectedProjectFilter);
 
+        // Load board columns for the selected project
+        loadBoardColumns(selectedProjectFilter);
+
         // Sidebar always starts closed (no persistence)
         sidebarOpen = false;
         $('#sidebar').removeClass('open');
@@ -576,6 +582,12 @@ $(document).ready(function() {
         setupDragAndDrop();
         setupSidebarResize();
         setupMobileTabNavigation();
+        setupCardTableListeners();
+
+        // Load triage collapsed state
+        try {
+            triageCollapsed = localStorage.getItem('forge-triage-collapsed') === 'true';
+        } catch(e) {}
 
         // Remove no-transitions class after initial load to enable smooth theme transitions
         // Use a small delay to ensure all initial rendering is complete
@@ -684,11 +696,128 @@ $(document).ready(function() {
         $.get('/api/tasks')
             .done(function(data) {
                 tasks = data || [];
-                renderAllTasks();
+                renderBoard();
             })
             .fail(function(xhr) {
                 showToast('Error loading tasks', 'error');
             });
+    }
+
+    // Load board columns for a project
+    function loadBoardColumns(projectId) {
+        if (!projectId) {
+            // "All Projects" view - use default status-based columns
+            boardColumns = [];
+            renderBoard();
+            return;
+        }
+
+        $.get('/api/projects/' + projectId + '/columns')
+            .done(function(data) {
+                boardColumns = data || [];
+                renderBoard();
+                populateColumnSelect();
+            })
+            .fail(function(xhr) {
+                boardColumns = [];
+                renderBoard();
+            });
+    }
+
+    // Populate the column dropdown in task modal
+    function populateColumnSelect() {
+        const $select = $('#taskColumn');
+        $select.html('<option value="">Default</option>');
+        boardColumns.forEach(function(col) {
+            if (col.column_type !== 'done' && col.column_type !== 'not_now') {
+                const emoji = col.emoji ? col.emoji + ' ' : '';
+                $select.append(`<option value="${col.id}">${emoji}${escapeHtml(col.name)}</option>`);
+            }
+        });
+    }
+
+    // Update task column_id via API
+    function updateTaskColumn(taskId, columnId) {
+        $.ajax({
+            url: '/api/tasks/' + taskId,
+            method: 'PUT',
+            contentType: 'application/json',
+            data: JSON.stringify({ column_id: columnId })
+        })
+        .done(function(task) {
+            const idx = tasks.findIndex(t => t.id === task.id);
+            if (idx !== -1) tasks[idx] = task;
+            renderBoard();
+        })
+        .fail(function(xhr) {
+            const msg = xhr.responseJSON?.error || 'Error updating';
+            showToast(msg, 'error');
+            renderBoard(); // Re-render to revert optimistic update
+        });
+    }
+
+    // Column CRUD API
+    function createColumn(projectId, name, colType) {
+        $.ajax({
+            url: '/api/projects/' + projectId + '/columns',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ name: name, column_type: colType || 'regular' })
+        })
+        .done(function(col) {
+            boardColumns.push(col);
+            renderBoard();
+            showToast('Column created', 'success');
+        })
+        .fail(function(xhr) {
+            showToast(xhr.responseJSON?.error || 'Error creating column', 'error');
+        });
+    }
+
+    function updateColumn(colId, updates) {
+        const projectId = selectedProjectFilter;
+        $.ajax({
+            url: '/api/projects/' + projectId + '/columns/' + colId,
+            method: 'PUT',
+            contentType: 'application/json',
+            data: JSON.stringify(updates)
+        })
+        .done(function(col) {
+            const idx = boardColumns.findIndex(c => c.id === col.id);
+            if (idx !== -1) boardColumns[idx] = col;
+            renderBoard();
+        })
+        .fail(function(xhr) {
+            showToast(xhr.responseJSON?.error || 'Error updating column', 'error');
+        });
+    }
+
+    function deleteColumn(colId) {
+        const projectId = selectedProjectFilter;
+        $.ajax({
+            url: '/api/projects/' + projectId + '/columns/' + colId,
+            method: 'DELETE'
+        })
+        .done(function() {
+            boardColumns = boardColumns.filter(c => c.id !== colId);
+            renderBoard();
+            showToast('Column deleted', 'success');
+        })
+        .fail(function(xhr) {
+            showToast(xhr.responseJSON?.error || 'Error deleting column', 'error');
+        });
+    }
+
+    function reorderColumns(projectId, columnIds) {
+        $.ajax({
+            url: '/api/projects/' + projectId + '/columns/reorder',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ column_ids: columnIds })
+        })
+        .fail(function(xhr) {
+            showToast(xhr.responseJSON?.error || 'Error reordering', 'error');
+        });
     }
 
     function saveTask(taskData) {
@@ -706,7 +835,7 @@ $(document).ready(function() {
             const idx = tasks.findIndex(t => t.id === task.id);
             if (idx !== -1) {
                 tasks[idx] = task;
-                renderAllTasks();
+                renderBoard();
             }
 
             // Upload pending attachments for new tasks
@@ -730,7 +859,7 @@ $(document).ready(function() {
         })
         .done(function() {
             tasks = tasks.filter(t => t.id !== taskId);
-            renderAllTasks();
+            renderBoard();
             closeModal();
             showToast('Task deleted', 'success');
         })
@@ -750,7 +879,7 @@ $(document).ready(function() {
         .done(function(task) {
             const idx = tasks.findIndex(t => t.id === task.id);
             if (idx !== -1) tasks[idx] = task;
-            renderAllTasks();
+            renderBoard();
 
             // Check if task was redirected to queue (requested progress but got queued)
             if (newStatus === 'progress' && task.status === 'queued') {
@@ -762,7 +891,7 @@ $(document).ready(function() {
         .fail(function(xhr) {
             const msg = xhr.responseJSON?.error || 'Error updating';
             showToast(msg, 'error');
-            renderAllTasks();
+            renderBoard();
         });
     }
 
@@ -1135,7 +1264,7 @@ $(document).ready(function() {
                     if (msg.iteration !== undefined) {
                         statusTask.current_iteration = msg.iteration;
                     }
-                    renderAllTasks();
+                    renderBoard();
                 } else {
                     // Just update badge if status didn't change (e.g., iteration update)
                     updateStatusBadge(msg.task_id, msg.status, msg.iteration);
@@ -1156,6 +1285,28 @@ $(document).ready(function() {
                 break;
             case 'merge_conflict':
                 showMergeConflictModal(msg.conflict);
+                break;
+            case 'column_updated':
+                if (msg.column && selectedProjectFilter && msg.column.project_id === selectedProjectFilter) {
+                    const idx = boardColumns.findIndex(c => c.id === msg.column.id);
+                    if (idx !== -1) {
+                        boardColumns[idx] = msg.column;
+                    } else {
+                        boardColumns.push(msg.column);
+                    }
+                    renderBoard();
+                }
+                break;
+            case 'column_deleted':
+                if (msg.column && selectedProjectFilter && msg.column.project_id === selectedProjectFilter) {
+                    boardColumns = boardColumns.filter(c => c.id !== msg.column.id);
+                    renderBoard();
+                }
+                break;
+            case 'columns_reordered':
+                if (msg.message === selectedProjectFilter) {
+                    loadBoardColumns(selectedProjectFilter);
+                }
                 break;
         }
     }
@@ -2231,7 +2382,7 @@ git rebase --continue
         } else {
             tasks.push(task);
         }
-        renderAllTasks();
+        renderBoard();
 
         if (currentTaskId === task.id) {
             updateModalForTask(task);
@@ -2253,7 +2404,7 @@ git rebase --continue
         const task = tasks.find(t => t.id === taskId);
         if (task) {
             task.working_branch = branch;
-            renderAllTasks();
+            renderBoard();
         }
 
         if (currentTaskId === taskId) {
@@ -2277,35 +2428,238 @@ git rebase --continue
     }
 
     // Rendering
-    function renderAllTasks() {
-        const statuses = ['backlog', 'queued', 'progress', 'review', 'done', 'blocked'];
-
+    function renderBoard() {
         // Update logo icon pulsating state
         updateLogoIconState();
 
-        statuses.forEach(function(status) {
-            const $container = $(`.column[data-status="${status}"] .tasks-container`);
-            $container.empty();
+        let filteredTasks = tasks;
+        if (selectedProjectFilter) {
+            filteredTasks = tasks.filter(t => t.project_id === selectedProjectFilter);
+        }
 
-            let statusTasks = tasks.filter(t => t.status === status);
+        // If we have board columns (project selected), use column-based rendering
+        if (boardColumns.length > 0 && selectedProjectFilter) {
+            renderColumnBoard(filteredTasks);
+        } else {
+            // "All Projects" fallback: use status-based columns
+            renderStatusBoard(filteredTasks);
+        }
+    }
 
-            // Filter by project if selected
-            if (selectedProjectFilter) {
-                statusTasks = statusTasks.filter(t => t.project_id === selectedProjectFilter);
-            }
+    // Column-based board rendering (when a project is selected)
+    function renderColumnBoard(filteredTasks) {
+        const triageCol = boardColumns.find(c => c.column_type === 'triage');
+        const regularCols = boardColumns.filter(c => c.column_type === 'regular').sort((a, b) => a.sort_order - b.sort_order);
+        const doneCol = boardColumns.find(c => c.column_type === 'done');
+        const notNowCol = boardColumns.find(c => c.column_type === 'not_now');
 
-            // Sort queued tasks by queue position
-            if (status === 'queued') {
-                statusTasks.sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
-            }
-
-            statusTasks.forEach(function(task) {
-                $container.append(createTaskCard(task));
-            });
-
-            // Update mobile tab counts
-            $(`.mobile-tab-count[data-count="${status}"]`).text(statusTasks.length);
+        // Assign tasks without column_id to triage
+        const assignedTasks = new Map();
+        filteredTasks.forEach(t => {
+            const colId = t.column_id || (triageCol ? triageCol.id : '');
+            if (!assignedTasks.has(colId)) assignedTasks.set(colId, []);
+            assignedTasks.get(colId).push(t);
         });
+
+        // Render Triage section
+        const $triageSection = $('#triageSection');
+        const $triageCards = $('#triageCards');
+        if (triageCol) {
+            $triageSection.show();
+            $triageCards.empty();
+            const triageTasks = assignedTasks.get(triageCol.id) || [];
+            triageTasks.forEach(t => $triageCards.append(createTaskCard(t)));
+            $('#triageCount').text(triageTasks.length);
+            if (triageCollapsed) {
+                $triageCards.addClass('collapsed');
+                $('#triageToggle').addClass('collapsed');
+            } else {
+                $triageCards.removeClass('collapsed');
+                $('#triageToggle').removeClass('collapsed');
+            }
+            // Make triage droppable
+            $triageCards.attr('data-column-id', triageCol.id);
+        } else {
+            $triageSection.hide();
+        }
+
+        // Render regular columns
+        const $columnsArea = $('#columnsArea');
+        $columnsArea.empty();
+
+        regularCols.forEach(function(col) {
+            const colTasks = assignedTasks.get(col.id) || [];
+            const emoji = col.emoji ? `<span class="col-emoji">${col.emoji}</span>` : '';
+            const colorBorder = col.color ? `border-top: 3px solid ${col.color};` : '';
+
+            const $column = $(`
+                <div class="board-column" data-column-id="${col.id}" style="${colorBorder}">
+                    <div class="board-column-header">
+                        ${emoji}
+                        <h3 class="board-column-name">${escapeHtml(col.name)}</h3>
+                        <span class="board-column-count">${colTasks.length}</span>
+                        <div class="board-column-actions">
+                            <button class="col-menu-btn" data-col-id="${col.id}" title="Column options">
+                                <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                                    <path d="M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM1.5 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Zm13 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="board-column-cards" data-column-id="${col.id}"></div>
+                </div>
+            `);
+
+            colTasks.forEach(t => $column.find('.board-column-cards').append(createTaskCard(t)));
+            $columnsArea.append($column);
+        });
+
+        // Add "+ Add Column" button
+        $columnsArea.append(`
+            <div class="board-column add-column-placeholder">
+                <button class="btn-add-column" id="btnAddColumn">
+                    <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                        <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"/>
+                    </svg>
+                    Add Column
+                </button>
+            </div>
+        `);
+
+        // Update Done/Not Now sidebar tab counts
+        const doneTasks = doneCol ? (assignedTasks.get(doneCol.id) || []) : [];
+        const notNowTasks = notNowCol ? (assignedTasks.get(notNowCol.id) || []) : [];
+        $('#doneCount').text(doneTasks.length);
+        $('#notNowCount').text(notNowTasks.length);
+        $('#sidebarTabs').show();
+
+        // Update sidebar panel if open
+        if (openSidebarPanel) {
+            renderSidebarPanel(openSidebarPanel, filteredTasks);
+        }
+
+        // Update mobile tabs
+        renderMobileTabs();
+    }
+
+    // Status-based board rendering (All Projects view)
+    function renderStatusBoard(filteredTasks) {
+        const statusColumns = [
+            { id: '_backlog', name: 'Backlog', type: 'regular', status: 'backlog' },
+            { id: '_queued', name: 'Queue', type: 'regular', status: 'queued' },
+            { id: '_progress', name: 'In Progress', type: 'regular', status: 'progress' },
+            { id: '_review', name: 'Review', type: 'regular', status: 'review' },
+            { id: '_done', name: 'Done', type: 'done', status: 'done' },
+            { id: '_blocked', name: 'Blocked', type: 'regular', status: 'blocked' },
+        ];
+
+        // Hide triage for all-projects view
+        $('#triageSection').hide();
+
+        const regularStatuses = statusColumns.filter(c => c.type === 'regular');
+        const doneStatus = statusColumns.find(c => c.type === 'done');
+
+        const $columnsArea = $('#columnsArea');
+        $columnsArea.empty();
+
+        regularStatuses.forEach(function(col) {
+            let colTasks = filteredTasks.filter(t => t.status === col.status);
+            if (col.status === 'queued') {
+                colTasks.sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
+            }
+
+            const $column = $(`
+                <div class="board-column" data-status="${col.status}">
+                    <div class="board-column-header">
+                        <h3 class="board-column-name">${col.name}</h3>
+                        <span class="board-column-count">${colTasks.length}</span>
+                        ${col.status === 'backlog' ? '<button class="btn btn-add-inline" data-status="backlog">+</button>' : ''}
+                    </div>
+                    <div class="board-column-cards" data-status="${col.status}"></div>
+                </div>
+            `);
+
+            colTasks.forEach(t => $column.find('.board-column-cards').append(createTaskCard(t)));
+            $columnsArea.append($column);
+        });
+
+        // Done count in sidebar tab
+        const doneTasks = doneStatus ? filteredTasks.filter(t => t.status === doneStatus.status) : [];
+        $('#doneCount').text(doneTasks.length);
+        // Hide Not Now in status mode, show Done
+        $('#tabNotNow').hide();
+        $('#tabDone').show();
+        $('#sidebarTabs').show();
+
+        // Update sidebar panel if open
+        if (openSidebarPanel) {
+            renderSidebarPanel(openSidebarPanel, filteredTasks);
+        }
+
+        // Update mobile tabs
+        renderMobileTabs();
+    }
+
+    // Render sidebar panel for Done / Not Now
+    function renderSidebarPanel(panelType, filteredTasks) {
+        const $panel = $('#sidebarPanel');
+        const $cards = $('#sidebarPanelCards');
+        $cards.empty();
+
+        let panelTasks = [];
+        if (boardColumns.length > 0 && selectedProjectFilter) {
+            const col = boardColumns.find(c => c.column_type === panelType);
+            if (col) {
+                panelTasks = filteredTasks.filter(t => t.column_id === col.id);
+            }
+        } else {
+            // Status-based
+            const statusMap = { done: 'done', not_now: 'done' };
+            panelTasks = filteredTasks.filter(t => t.status === (statusMap[panelType] || panelType));
+        }
+
+        panelTasks.forEach(t => $cards.append(createTaskCard(t)));
+
+        $('#sidebarPanelTitle').text(panelType === 'done' ? 'Done' : 'Not Now');
+        $('#sidebarPanelCount').text(panelTasks.length);
+        $panel.removeClass('hidden');
+
+        // Make panel cards droppable
+        if (boardColumns.length > 0) {
+            const col = boardColumns.find(c => c.column_type === panelType);
+            if (col) {
+                $cards.attr('data-column-id', col.id);
+            }
+        }
+    }
+
+    // Render mobile tabs dynamically
+    function renderMobileTabs() {
+        const $inner = $('#mobileColumnTabsInner');
+        $inner.empty();
+
+        if (boardColumns.length > 0 && selectedProjectFilter) {
+            const visibleCols = boardColumns.filter(c => c.column_type !== 'done' && c.column_type !== 'not_now');
+            visibleCols.forEach(function(col, idx) {
+                const isActive = idx === 0 ? 'active' : '';
+                $inner.append(`
+                    <button class="mobile-tab ${isActive}" data-column-id="${col.id}">
+                        <span class="mobile-tab-label">${col.emoji || ''} ${escapeHtml(col.name)}</span>
+                    </button>
+                `);
+            });
+        } else {
+            const statuses = ['backlog', 'queued', 'progress', 'review', 'blocked'];
+            statuses.forEach(function(status, idx) {
+                const labels = { backlog: 'Backlog', queued: 'Queue', progress: 'Progress', review: 'Review', blocked: 'Blocked' };
+                const isActive = idx === 0 ? 'active' : '';
+                $inner.append(`
+                    <button class="mobile-tab ${isActive}" data-status="${status}">
+                        <span class="mobile-tab-label">${labels[status]}</span>
+                    </button>
+                `);
+            });
+        }
     }
 
     // ============================================================================
@@ -2313,39 +2667,176 @@ git rebase --continue
     // ============================================================================
 
     function setupMobileTabNavigation() {
-        // Handle mobile tab clicks
+        // Handle mobile tab clicks (delegated for dynamic tabs)
         $(document).on('click', '.mobile-tab', function() {
             const status = $(this).data('status');
-            switchMobileTab(status);
+            const colId = $(this).data('column-id');
+            if (colId) {
+                switchMobileTabByColumn(colId);
+            } else if (status) {
+                switchMobileTab(status);
+            }
         });
-
-        // Initialize: ensure backlog is active
-        switchMobileTab('backlog');
     }
 
     function switchMobileTab(status) {
         activeMobileTab = status;
-
-        // Update tab active states
         $('.mobile-tab').removeClass('active');
         $(`.mobile-tab[data-status="${status}"]`).addClass('active');
 
-        // Update column visibility
-        $('.column').removeClass('mobile-active');
-        $(`.column[data-status="${status}"]`).addClass('mobile-active');
+        // Show only the matching column
+        $('.board-column').removeClass('mobile-active');
+        $(`.board-column[data-status="${status}"]`).addClass('mobile-active');
+    }
 
-        // Scroll active tab into view
-        const $activeTab = $(`.mobile-tab[data-status="${status}"]`);
-        if ($activeTab.length) {
-            const container = document.getElementById('mobileColumnTabs');
-            const tab = $activeTab[0];
-            if (container && tab) {
-                const containerRect = container.getBoundingClientRect();
-                const tabRect = tab.getBoundingClientRect();
+    function switchMobileTabByColumn(colId) {
+        $('.mobile-tab').removeClass('active');
+        $(`.mobile-tab[data-column-id="${colId}"]`).addClass('active');
 
-                if (tabRect.left < containerRect.left || tabRect.right > containerRect.right) {
-                    tab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        // Show only the matching column
+        $('.board-column').removeClass('mobile-active');
+        $('#triageSection').hide();
+
+        // If triage tab - show triage section instead of a column
+        const triageCol = boardColumns.find(c => c.column_type === 'triage');
+        if (triageCol && triageCol.id === colId) {
+            $('#triageSection').show();
+        } else {
+            $(`.board-column[data-column-id="${colId}"]`).addClass('mobile-active');
+        }
+    }
+
+    // Card Table specific event listeners
+    function setupCardTableListeners() {
+        // Add card button
+        $(document).on('click', '#btnAddCard', function() {
+            openNewTaskModal();
+        });
+
+        // Triage toggle
+        $(document).on('click', '#triageToggle', function() {
+            triageCollapsed = !triageCollapsed;
+            try { localStorage.setItem('forge-triage-collapsed', triageCollapsed); } catch(e) {}
+            $('#triageCards').toggleClass('collapsed', triageCollapsed);
+            $(this).toggleClass('collapsed', triageCollapsed);
+        });
+
+        // Sidebar tabs (Done / Not Now)
+        $(document).on('click', '.sidebar-tab', function(e) {
+            // Don't open panel on drop
+            if (e.originalEvent && e.originalEvent.dataTransfer) return;
+            const colType = $(this).data('column-type');
+
+            if (openSidebarPanel === colType) {
+                // Close panel
+                openSidebarPanel = null;
+                $('#sidebarPanel').addClass('hidden');
+                $('.sidebar-tab').removeClass('active');
+            } else {
+                openSidebarPanel = colType;
+                $('.sidebar-tab').removeClass('active');
+                $(this).addClass('active');
+                let filteredTasks = tasks;
+                if (selectedProjectFilter) {
+                    filteredTasks = tasks.filter(t => t.project_id === selectedProjectFilter);
                 }
+                renderSidebarPanel(colType, filteredTasks);
+            }
+        });
+
+        // Close sidebar panel
+        $(document).on('click', '#sidebarPanelClose', function() {
+            openSidebarPanel = null;
+            $('#sidebarPanel').addClass('hidden');
+            $('.sidebar-tab').removeClass('active');
+        });
+
+        // Add Column button
+        $(document).on('click', '#btnAddColumn', function() {
+            if (!selectedProjectFilter) return;
+            const name = prompt('Column name:');
+            if (name && name.trim()) {
+                createColumn(selectedProjectFilter, name.trim());
+            }
+        });
+
+        // Column menu button
+        $(document).on('click', '.col-menu-btn', function(e) {
+            e.stopPropagation();
+            const colId = $(this).data('col-id');
+            const col = boardColumns.find(c => c.id === colId);
+            if (!col) return;
+
+            // Remove existing menu
+            $('.col-context-menu').remove();
+
+            const $menu = $(`
+                <div class="col-context-menu" data-col-id="${colId}">
+                    <button class="col-menu-item" data-action="rename">Rename</button>
+                    <button class="col-menu-item" data-action="color">Change Color</button>
+                    <button class="col-menu-item" data-action="emoji">Set Emoji</button>
+                    <div class="col-menu-divider"></div>
+                    <button class="col-menu-item col-menu-danger" data-action="delete">Delete Column</button>
+                </div>
+            `);
+
+            $(this).after($menu);
+
+            // Handle menu item clicks
+            $menu.on('click', '.col-menu-item', function() {
+                const action = $(this).data('action');
+                handleColumnAction(colId, action);
+                $menu.remove();
+            });
+
+            // Close on outside click
+            setTimeout(() => {
+                $(document).one('click', function() {
+                    $menu.remove();
+                });
+            }, 10);
+        });
+
+        // Add inline button (+) for status columns
+        $(document).on('click', '.btn-add-inline', function() {
+            openNewTaskModal();
+        });
+    }
+
+    function handleColumnAction(colId, action) {
+        switch (action) {
+            case 'rename': {
+                const col = boardColumns.find(c => c.id === colId);
+                const name = prompt('New name:', col ? col.name : '');
+                if (name && name.trim()) {
+                    updateColumn(colId, { name: name.trim() });
+                }
+                break;
+            }
+            case 'color': {
+                const col = boardColumns.find(c => c.id === colId);
+                // Create a hidden color input
+                const $input = $('<input type="color">').val(col ? col.color || '#4a9eff' : '#4a9eff');
+                $input.on('change', function() {
+                    updateColumn(colId, { color: $(this).val() });
+                    $input.remove();
+                });
+                $('body').append($input);
+                $input[0].click();
+                break;
+            }
+            case 'emoji': {
+                const emoji = prompt('Enter emoji (or leave blank to remove):');
+                if (emoji !== null) {
+                    updateColumn(colId, { emoji: emoji.trim() });
+                }
+                break;
+            }
+            case 'delete': {
+                if (confirm('Delete this column? Tasks will be moved to the first remaining column.')) {
+                    deleteColumn(colId);
+                }
+                break;
             }
         }
     }
@@ -2415,12 +2906,41 @@ git rebase --continue
             </div>
         ` : '';
 
-        // Build the card with new layout structure
-        // - Header: priority + title
-        // - Badge row: type badge (left) + status badge (right)
-        // - Footer: LIVE button, rollback button, and attachment badge
+        // Build the card with Basecamp-style layout
+        // - Title (bold)
+        // - Author line: "By {created_by} on {date}"
+        // - Badge row: type badge + status badge
+        // - Footer: LIVE button, rollback, attachment count
         const badgeRowHtml = (typeBadge || statusBadge) ?
             `<div class="task-card-badges">${typeBadge}<div class="badge-spacer"></div>${statusBadge}</div>` : '';
+
+        // Author/date line
+        const createdBy = task.created_by || '';
+        const createdDate = task.created_at ? new Date(task.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+        const authorLine = createdBy
+            ? `<div class="task-card-meta">By ${escapeHtml(createdBy)}${createdDate ? ' on ' + createdDate : ''}</div>`
+            : (createdDate ? `<div class="task-card-meta">${createdDate}</div>` : '');
+
+        // Assigned-to avatar
+        const assignedTo = task.assigned_to || '';
+        let assignedIcon = '';
+        if (assignedTo) {
+            if (assignedTo.toLowerCase() === 'claude') {
+                assignedIcon = `<span class="assigned-avatar assigned-llm" title="Assigned to Claude">
+                    <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12"><path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 2.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4zM4 11c0-1.5 2.7-2.5 4-2.5s4 1 4 2.5v.5H4v-.5z"/></svg>
+                </span>`;
+            } else {
+                const initials = assignedTo.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+                assignedIcon = `<span class="assigned-avatar assigned-human" title="Assigned to ${escapeHtml(assignedTo)}">${initials}</span>`;
+            }
+        }
+
+        // Project badge for all-projects view
+        const projectBadge = (!selectedProjectFilter && task.project_id) ?
+            (() => {
+                const proj = projects.find(p => p.id === task.project_id);
+                return proj ? `<span class="task-project-badge">${escapeHtml(proj.name)}</span>` : '';
+            })() : '';
 
         const $card = $(`
             <div class="task-card" data-id="${task.id}" draggable="true">
@@ -2428,7 +2948,10 @@ git rebase --continue
                 <div class="task-card-header">
                     <div class="priority-indicator priority-${task.priority}"></div>
                     <span class="task-title">${escapeHtml(task.title)}</span>
+                    ${assignedIcon}
                 </div>
+                ${authorLine}
+                ${projectBadge}
                 ${badgeRowHtml}
                 <div class="task-card-footer"></div>
             </div>
@@ -3439,38 +3962,80 @@ git rebase --continue
 
         $(document).on('dragend', '.task-card', function() {
             $(this).removeClass('dragging');
+            $('.board-column-cards, .triage-cards, .sidebar-panel-cards, .sidebar-tab').removeClass('drag-over');
         });
 
-        $('.tasks-container').on('dragover', function(e) {
+        // Drag over for dynamic column cards containers
+        $(document).on('dragover', '.board-column-cards, .triage-cards, .sidebar-panel-cards', function(e) {
             e.preventDefault();
             e.originalEvent.dataTransfer.dropEffect = 'move';
             $(this).addClass('drag-over');
         });
 
-        $('.tasks-container').on('dragleave', function() {
+        $(document).on('dragleave', '.board-column-cards, .triage-cards, .sidebar-panel-cards', function() {
             $(this).removeClass('drag-over');
         });
 
-        $('.tasks-container').on('drop', function(e) {
+        // Drop on column cards
+        $(document).on('drop', '.board-column-cards, .triage-cards, .sidebar-panel-cards', function(e) {
             e.preventDefault();
             $(this).removeClass('drag-over');
 
             const taskId = e.originalEvent.dataTransfer.getData('text/plain');
-            const newStatus = $(this).closest('.column').data('status');
             const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
 
-            if (task && task.status !== newStatus) {
-                task.status = newStatus;
-                renderAllTasks();
-                updateTaskStatus(taskId, newStatus);
+            const targetColumnId = $(this).data('column-id');
+            const targetStatus = $(this).data('status');
 
-                // On mobile, switch to the target column
-                if (isMobileView()) {
-                    switchMobileTab(newStatus);
-                }
+            if (targetColumnId && task.column_id !== targetColumnId) {
+                // Column-based move
+                task.column_id = targetColumnId;
+                renderBoard();
+                updateTaskColumn(taskId, targetColumnId);
+            } else if (targetStatus && task.status !== targetStatus) {
+                // Status-based move (All Projects view)
+                task.status = targetStatus;
+                renderBoard();
+                updateTaskStatus(taskId, targetStatus);
             }
         });
 
+        // Drag over sidebar tabs (Done / Not Now)
+        $(document).on('dragover', '.sidebar-tab', function(e) {
+            e.preventDefault();
+            e.originalEvent.dataTransfer.dropEffect = 'move';
+            $(this).addClass('drag-over');
+        });
+
+        $(document).on('dragleave', '.sidebar-tab', function() {
+            $(this).removeClass('drag-over');
+        });
+
+        $(document).on('drop', '.sidebar-tab', function(e) {
+            e.preventDefault();
+            $(this).removeClass('drag-over');
+
+            const taskId = e.originalEvent.dataTransfer.getData('text/plain');
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            const colType = $(this).data('column-type');
+            if (boardColumns.length > 0) {
+                const col = boardColumns.find(c => c.column_type === colType);
+                if (col && task.column_id !== col.id) {
+                    task.column_id = col.id;
+                    renderBoard();
+                    updateTaskColumn(taskId, col.id);
+                }
+            } else if (colType === 'done') {
+                task.status = 'done';
+                renderBoard();
+                updateTaskStatus(taskId, 'done');
+            }
+        });
+
+        // Touch events for mobile drag
         let touchStartX, touchStartY, draggedElement;
 
         $(document).on('touchstart', '.task-card', function(e) {
@@ -3492,7 +4057,6 @@ git rebase --continue
             clearTimeout($(this).data('touchTimer'));
             $(this).removeClass('dragging');
         });
-
     }
 
     // Sidebar Resize Functionality
@@ -3622,6 +4186,8 @@ git rebase --continue
         $('#taskMaxIterations').val(config.default_max_iterations || 10);
         $('#taskProjectDir').val('');
         $('#taskTargetBranch').html('<option value="">Default</option>');
+        $('#taskAssignedTo').val('');
+        $('#taskColumn').val('');
 
         // Show/hide project dir and load branches based on project selection
         if (selectedProjectFilter) {
@@ -3633,6 +4199,8 @@ git rebase --continue
                 loadBranchesForProject(selectedProjectFilter, project.working_branch);
                 $('#targetBranchGroup').removeClass('hidden');
             }
+            // Populate column dropdown
+            populateColumnSelect();
         } else {
             $('#projectDirGroup').removeClass('hidden');
             $('#targetBranchGroup').addClass('hidden');
@@ -3643,9 +4211,13 @@ git rebase --continue
         $('#logSection').addClass('hidden');
         $('#errorSection').addClass('hidden');
         $('#branchInfoGroup').addClass('hidden');
+        $('#feedbackSection').addClass('hidden');
+        $('#continueTaskSection').addClass('hidden');
 
         // Clear attachments for new task
         clearAttachmentList();
+        pendingAttachments = [];
+        $('#pendingAttachmentList').empty();
 
         $('#taskModal').addClass('active');
         $('#taskTitle').focus();
@@ -3663,6 +4235,14 @@ git rebase --continue
         $('#taskPriority').val(task.priority);
         $('#taskMaxIterations').val(task.max_iterations);
         $('#taskProjectDir').val(task.project_dir || '');
+        $('#taskAssignedTo').val(task.assigned_to || '');
+        $('#taskColumn').val(task.column_id || '');
+
+        // Populate column select if project selected
+        if (task.project_id && boardColumns.length > 0) {
+            populateColumnSelect();
+            $('#taskColumn').val(task.column_id || '');
+        }
 
         // Show/hide project dir based on project selection
         if (task.project_id) {
@@ -3821,7 +4401,9 @@ git rebase --continue
             priority: parseInt($('#taskPriority').val()),
             max_iterations: parseInt($('#taskMaxIterations').val()),
             project_dir: projectDir,
-            target_branch: $('#taskTargetBranch').val() || ''
+            target_branch: $('#taskTargetBranch').val() || '',
+            assigned_to: $('#taskAssignedTo').val() || '',
+            column_id: $('#taskColumn').val() || ''
         };
 
         if (!taskData.title) {
@@ -3830,6 +4412,12 @@ git rebase --continue
         }
 
         const taskId = $('#taskId').val();
+
+        // Set created_by for new tasks
+        if (!taskId) {
+            taskData.created_by = 'Julian F.';
+        }
+
         if (taskId) {
             taskData.id = taskId;
         }
@@ -3986,7 +4574,7 @@ git rebase --continue
             });
             renderTaskTypeList();
             populateTaskTypeSelect();
-            renderAllTasks();
+            renderBoard();
             showToast('Task type deleted', 'success');
         })
         .fail(function(xhr) {
@@ -4266,7 +4854,7 @@ git rebase --continue
                 }
 
                 // Re-render to show conflict state
-                renderAllTasks();
+                renderBoard();
             }
         })
         .fail(function(xhr) {

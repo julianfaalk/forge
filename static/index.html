@@ -144,33 +144,10 @@
     <!-- Sidebar Overlay (for dimming background) -->
     <div class="sidebar-overlay" id="sidebarOverlay"></div>
 
-    <!-- Mobile Column Tabs (visible only on mobile, positioned below header) -->
+    <!-- Mobile Column Tabs (visible only on mobile, dynamically rendered) -->
     <div class="mobile-column-tabs" id="mobileColumnTabs">
-        <div class="mobile-column-tabs-inner">
-            <button class="mobile-tab active" data-status="backlog">
-                <span class="mobile-tab-label">Backlog</span>
-                <span class="mobile-tab-count" data-count="backlog">0</span>
-            </button>
-            <button class="mobile-tab" data-status="queued">
-                <span class="mobile-tab-label">Queue</span>
-                <span class="mobile-tab-count" data-count="queued">0</span>
-            </button>
-            <button class="mobile-tab" data-status="progress">
-                <span class="mobile-tab-label">Progress</span>
-                <span class="mobile-tab-count" data-count="progress">0</span>
-            </button>
-            <button class="mobile-tab" data-status="review">
-                <span class="mobile-tab-label">Review</span>
-                <span class="mobile-tab-count" data-count="review">0</span>
-            </button>
-            <button class="mobile-tab" data-status="done">
-                <span class="mobile-tab-label">Done</span>
-                <span class="mobile-tab-count" data-count="done">0</span>
-            </button>
-            <button class="mobile-tab" data-status="blocked">
-                <span class="mobile-tab-label">Blocked</span>
-                <span class="mobile-tab-count" data-count="blocked">0</span>
-            </button>
+        <div class="mobile-column-tabs-inner" id="mobileColumnTabsInner">
+            <!-- Tabs rendered dynamically from board columns -->
         </div>
     </div>
 
@@ -208,48 +185,61 @@
         <!-- Sidebar Resize Handle -->
         <div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
 
-        <main class="board">
-            <div class="column mobile-active" data-status="backlog">
-                <div class="column-header">
-                    <h2>Backlog</h2>
-                    <button class="btn btn-add" data-status="backlog">+</button>
-                </div>
-                <div class="tasks-container"></div>
+        <main class="card-table" id="cardTable">
+            <!-- Add Card button row -->
+            <div class="card-table-toolbar">
+                <button class="btn btn-add-card" id="btnAddCard" title="Add a new card">
+                    <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14">
+                        <path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"/>
+                    </svg>
+                    Add a card
+                </button>
             </div>
 
-            <div class="column" data-status="queued">
-                <div class="column-header">
-                    <h2>Queue</h2>
+            <!-- Triage Section (horizontal card flow) -->
+            <div class="triage-section" id="triageSection">
+                <div class="triage-header">
+                    <span class="triage-emoji">📥</span>
+                    <h2 class="triage-title">Triage</h2>
+                    <span class="triage-count" id="triageCount">0</span>
+                    <button class="triage-toggle" id="triageToggle" title="Collapse/expand">
+                        <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+                            <path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z"/>
+                        </svg>
+                    </button>
                 </div>
-                <div class="tasks-container"></div>
+                <div class="triage-cards" id="triageCards">
+                    <!-- Triage cards rendered dynamically -->
+                </div>
             </div>
 
-            <div class="column" data-status="progress">
-                <div class="column-header">
-                    <h2>In Progress</h2>
-                </div>
-                <div class="tasks-container"></div>
+            <!-- Main Columns Area (dynamic columns) -->
+            <div class="columns-area" id="columnsArea">
+                <!-- Columns rendered dynamically from boardColumns -->
             </div>
 
-            <div class="column" data-status="review">
-                <div class="column-header">
-                    <h2>Review</h2>
-                </div>
-                <div class="tasks-container"></div>
+            <!-- Sidebar Tabs (Done / Not Now) -->
+            <div class="sidebar-tabs" id="sidebarTabs">
+                <button class="sidebar-tab" id="tabDone" data-column-type="done" title="Done">
+                    <span class="sidebar-tab-label">DONE</span>
+                    <span class="sidebar-tab-count" id="doneCount">0</span>
+                </button>
+                <button class="sidebar-tab" id="tabNotNow" data-column-type="not_now" title="Not Now">
+                    <span class="sidebar-tab-label">NOT NOW</span>
+                    <span class="sidebar-tab-count" id="notNowCount">0</span>
+                </button>
             </div>
 
-            <div class="column" data-status="done">
-                <div class="column-header">
-                    <h2>Done</h2>
+            <!-- Slide-out Panel for Done / Not Now -->
+            <div class="sidebar-panel hidden" id="sidebarPanel">
+                <div class="sidebar-panel-header">
+                    <h3 id="sidebarPanelTitle">Done</h3>
+                    <span class="sidebar-panel-count" id="sidebarPanelCount">0</span>
+                    <button class="sidebar-panel-close" id="sidebarPanelClose">&times;</button>
                 </div>
-                <div class="tasks-container"></div>
-            </div>
-
-            <div class="column" data-status="blocked">
-                <div class="column-header">
-                    <h2>Blocked</h2>
+                <div class="sidebar-panel-cards" id="sidebarPanelCards">
+                    <!-- Cards rendered dynamically -->
                 </div>
-                <div class="tasks-container"></div>
             </div>
         </main>
     </div>
@@ -330,6 +320,25 @@
                         </div>
 
                         <div class="form-group"></div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="taskAssignedTo">Assigned To</label>
+                            <select id="taskAssignedTo">
+                                <option value="">Unassigned</option>
+                                <option value="Julian F.">Julian F.</option>
+                                <option value="Claude">Claude (LLM)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="taskColumn">Column</label>
+                            <select id="taskColumn">
+                                <option value="">Default</option>
+                                <!-- Columns loaded dynamically -->
+                            </select>
+                        </div>
                     </div>
 
                     <div class="form-row">

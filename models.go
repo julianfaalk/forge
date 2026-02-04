@@ -68,6 +68,11 @@ type Task struct {
 	FinishedAt      *time.Time `json:"finished_at,omitempty"`      // When RALPH finished
 	ContinueMessage string     `json:"continue_message,omitempty"` // Message for RALPH when resuming from queue
 
+	// Board column assignment
+	ColumnID   string `json:"column_id,omitempty"`   // Board column this task belongs to
+	CreatedBy  string `json:"created_by,omitempty"`  // Who created it (e.g. "Julian F.", "Claude")
+	AssignedTo string `json:"assigned_to,omitempty"` // Who's working on it (e.g. "Julian F.", "Claude")
+
 	// Attachments - optional screenshots/videos for visual context
 	Attachments []Attachment `json:"attachments,omitempty"` // Liste der Anhänge (Bilder/Videos)
 
@@ -106,6 +111,18 @@ type Project struct {
 	IsGitRepo     bool   `json:"is_git_repo"`              // true = .git Verzeichnis existiert
 	TaskCount     int    `json:"task_count,omitempty"`     // Anzahl verknüpfter Tasks
 	GithubURL     string `json:"github_url,omitempty"`     // GitHub Repository URL (z.B. https://github.com/owner/repo)
+}
+
+// BoardColumn represents a customizable column on the card table board.
+type BoardColumn struct {
+	ID         string    `json:"id"`
+	ProjectID  string    `json:"project_id"`
+	Name       string    `json:"name"`
+	Color      string    `json:"color"`
+	Emoji      string    `json:"emoji"`
+	SortOrder  int       `json:"sort_order"`
+	ColumnType string    `json:"column_type"` // triage, regular, done, not_now
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // BranchProtectionRule definiert Branches, auf die RALPH niemals pushen darf.
@@ -155,12 +172,13 @@ type Config struct {
 // WSMessage ist das Format für WebSocket-Nachrichten zwischen Server und Client.
 // Der Type bestimmt, wie die Nachricht vom Client verarbeitet wird.
 type WSMessage struct {
-	Type      string     `json:"type"`                // Nachrichtentyp (log, status, task_updated, merge_conflict, etc.)
+	Type      string     `json:"type"`                // Nachrichtentyp (log, status, task_updated, merge_conflict, column_updated, column_deleted, etc.)
 	TaskID    string     `json:"task_id,omitempty"`   // Zugehörige Task-ID (falls relevant)
 	Message   string     `json:"message,omitempty"`   // Textnachricht (für log, deployment_success)
 	Status    TaskStatus `json:"status,omitempty"`    // Neuer Status (für status-Updates)
 	Task      *Task      `json:"task,omitempty"`      // Vollständiger Task (für task_updated)
 	Project   *Project   `json:"project,omitempty"`   // Vollständiges Projekt (für project_updated)
+	Column    *BoardColumn `json:"column,omitempty"`  // Board column (für column_updated)
 	Iteration int        `json:"iteration,omitempty"` // Aktuelle Iteration (für status)
 	Branch    string     `json:"branch,omitempty"`    // Branch-Name (für branch_change)
 	Conflict  *MergeConflict `json:"conflict,omitempty"` // Konflikt-Details (für merge_conflict)
@@ -181,6 +199,9 @@ type CreateTaskRequest struct {
 	ProjectID          string `json:"project_id"`         // Optional: Projekt-Verknüpfung
 	TaskTypeID         string `json:"task_type_id"`       // Optional: Task-Typ
 	TargetBranch       string `json:"target_branch"`      // Optional: Ziel-Branch für den Task
+	ColumnID           string `json:"column_id"`          // Optional: Board column assignment
+	CreatedBy          string `json:"created_by"`         // Optional: Who created it
+	AssignedTo         string `json:"assigned_to"`        // Optional: Who's assigned
 }
 
 // UpdateTaskRequest ist der Request-Body zum Aktualisieren eines Tasks.
@@ -197,6 +218,9 @@ type UpdateTaskRequest struct {
 	TaskTypeID         *string     `json:"task_type_id,omitempty"`
 	WorkingBranch      *string     `json:"working_branch,omitempty"`
 	TargetBranch       *string     `json:"target_branch,omitempty"`
+	ColumnID           *string     `json:"column_id,omitempty"`
+	CreatedBy          *string     `json:"created_by,omitempty"`
+	AssignedTo         *string     `json:"assigned_to,omitempty"`
 }
 
 // FeedbackRequest ist der Request-Body für Feedback an einen laufenden Task.
@@ -356,4 +380,28 @@ type PushStatusResponse struct {
 type SetWorkingBranchRequest struct {
 	Branch string `json:"branch"`
 	Create bool   `json:"create"` // true = neuen Branch von main erstellen
+}
+
+// ============================================================================
+// Board Column API Types
+// ============================================================================
+
+// CreateBoardColumnRequest is the request body for creating a new column.
+type CreateBoardColumnRequest struct {
+	Name       string `json:"name"`
+	Color      string `json:"color"`
+	Emoji      string `json:"emoji"`
+	ColumnType string `json:"column_type"` // triage, regular, done, not_now
+}
+
+// UpdateBoardColumnRequest is the request body for updating a column.
+type UpdateBoardColumnRequest struct {
+	Name  *string `json:"name,omitempty"`
+	Color *string `json:"color,omitempty"`
+	Emoji *string `json:"emoji,omitempty"`
+}
+
+// ReorderBoardColumnsRequest is the request body for reordering columns.
+type ReorderBoardColumnsRequest struct {
+	ColumnIDs []string `json:"column_ids"`
 }

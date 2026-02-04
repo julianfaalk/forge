@@ -151,6 +151,12 @@ func main() {
 			handler.HandleProjectPush(w, r) // Trunk-based: Push zu Remote
 		} else if strings.HasSuffix(path, "/working-branch") {
 			handler.HandleProjectSetWorkingBranch(w, r) // Trunk-based: Working Branch setzen
+		} else if strings.HasSuffix(path, "/columns/reorder") {
+			handler.HandleBoardColumnsReorder(w, r) // Board columns reorder
+		} else if strings.HasSuffix(path, "/columns") {
+			handler.HandleBoardColumns(w, r) // Board columns list/create
+		} else if strings.Contains(path, "/columns/") {
+			handler.HandleBoardColumn(w, r) // Single board column update/delete
 		} else {
 			handler.HandleProject(w, r) // Standard GET/PUT/DELETE
 		}
